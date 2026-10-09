@@ -9,10 +9,13 @@ Sources (all local except GitHub):
   - ps / lsof                       process tree; CPU/RSS attributed to sessions by ancestry, else by cwd
   - gh api graphql                  your PRs (open + recently closed), CI and review state
 
+Load history goes to ~/.cache/agentscope/agentscope.db (SQLite): per-minute averages per session and per machine
+group, and per-minute samples of each non-trivial process (what ran, under which session, how hard).
+
 Usage: python3 agentscope.py [--port 8377]   then open http://localhost:8377
        AGENTSCOPE_SYSTEM_HINTS="MyAntivirus:mdm-agent" python3 agentscope.py   # extra "system / security" processes
 """
-import argparse, collections, glob, json, os, re, subprocess, threading, time, traceback
+import argparse, collections, glob, json, os, re, sqlite3, subprocess, threading, time, traceback
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
@@ -374,6 +377,62 @@ def batch_cwds(pids):
 
 # Command-line substrings of OS / endpoint-security processes, bucketed as "system / security" rather than "other".
 # Add site-specific ones (antivirus, MDM agents...) via AGENTSCOPE_SYSTEM_HINTS, colon-separated.
+# ---------------------------------------------------------------------------------------------
+# Load history (SQLite)
+
+DB_FILE = os.path.join(CACHE, "agentscope.db")
+PROC_RETENTION_DAYS, AGG_RETENTION_DAYS = 30, 365
+# a process gets per-minute rows only when it matters: >= 0.5% CPU or >= 50 MB, or it is an agent's own claude
+PROC_MIN_CPU, PROC_MIN_RSS = 0.5, 50e6
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS session_minute (t INTEGER NOT NULL, sid TEXT NOT NULL, cpu REAL, rss INTEGER, PRIMARY KEY (t, sid)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS bucket_minute (t INTEGER NOT NULL, bucket TEXT NOT NULL, cpu REAL, rss INTEGER, PRIMARY KEY (t, bucket)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS proc (
+  id INTEGER PRIMARY KEY, pid INTEGER NOT NULL, label TEXT, args TEXT, cwd TEXT, sid TEXT, how TEXT,
+  first_t INTEGER, last_t INTEGER);
+CREATE INDEX IF NOT EXISTS proc_sid ON proc (sid, last_t);
+CREATE TABLE IF NOT EXISTS proc_minute (t INTEGER NOT NULL, proc_id INTEGER NOT NULL, cpu REAL, rss INTEGER, PRIMARY KEY (proc_id, t)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS proc_minute_t ON proc_minute (t);
+"""
+
+
+def db(readonly=False):
+    """A connection per use; WAL lets the HTTP threads read while the sampler writes."""
+    c = sqlite3.connect(DB_FILE, timeout=10)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA synchronous=NORMAL")
+    return c
+
+
+def db_init():
+    with db() as c:
+        c.executescript(SCHEMA)
+        # one-off import of the JSONL history written by earlier versions
+        for f in sorted(glob.glob(os.path.join(CACHE, "load-*.jsonl"))):
+            rows_s, rows_b = [], []
+            for line in open(f):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                for k, (cpu, rss) in r["s"].items():
+                    (rows_b if k.startswith("@") else rows_s).append((r["t"], k.lstrip("@"), cpu, rss))
+            c.executemany("INSERT OR IGNORE INTO session_minute VALUES (?,?,?,?)", rows_s)
+            c.executemany("INSERT OR IGNORE INTO bucket_minute VALUES (?,?,?,?)", rows_b)
+            os.replace(f, f + ".imported")
+            print(f"imported {os.path.basename(f)}: {len(rows_s)} session rows")
+
+
+def db_prune():
+    now = time.time()
+    with db() as c:
+        c.execute("DELETE FROM proc_minute WHERE t < ?", (now - PROC_RETENTION_DAYS * 86400,))
+        c.execute("DELETE FROM proc WHERE last_t < ?", (now - PROC_RETENTION_DAYS * 86400,))
+        c.execute("DELETE FROM session_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
+        c.execute("DELETE FROM bucket_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
+
+
 SYSTEM_HINTS = ("/System/", "/usr/libexec", "/usr/sbin", "/sbin/", "/Library/SystemExtensions", "/Library/Apple/") + \
     tuple(h for h in os.environ.get("AGENTSCOPE_SYSTEM_HINTS", "").split(":") if h)
 
@@ -387,8 +446,11 @@ class Sampler:
         self.lock = threading.Lock()
         self.current = dict(t=0, sessions={}, buckets={}, orphans=[])
         self.hist = collections.deque(maxlen=int(3 * 3600 / period))  # (t, {sid: [cpu, rss]}, {bucket: [cpu, rss]})
-        self.minute_acc = collections.defaultdict(lambda: [0.0, 0, 0])
+        self.minute_acc = collections.defaultdict(lambda: [0.0, 0, 0])  # sid / @bucket -> [cpu sum, rss sum, n present]
+        self.proc_acc = {}  # (pid, args) -> dict(cpu, rss, n, label, cwd, sid, how)
+        self.n_samples = 0  # samples taken in the current minute
         self.minute = None
+        self.proc_ids = {}  # (pid, args) -> proc.id; a pid reused for a different command line is a new process
         self._cwd_cache = {}  # pid -> cwd (pids are not reused quickly enough to matter here)
         self.sticky = {}  # pid -> (sid, how): a daemonized child keeps the session it was first seen under
 
@@ -474,7 +536,7 @@ class Sampler:
                 s["cpu"] += cpu
                 s["rss"] += p["rss"]
                 s["procs"].append(dict(pid=pid, label=proc_label(p["args"]), cpu=round(cpu, 1), rss=p["rss"], how=o[1],
-                                       self=pid in live))
+                                       self=pid in live, args=p["args"][:400], cwd=self._cwd_cache.get(pid)))
                 buckets["agents"]["cpu"] += cpu
                 buckets["agents"]["rss"] += p["rss"]
             else:
@@ -503,24 +565,70 @@ class Sampler:
                                 live=live_by_sid)
             self.hist.append((now, {k: [round(v["cpu"], 1), v["rss"]] for k, v in sess.items()},
                               {k: [round(v["cpu"], 1), v["rss"]] for k, v in buckets.items()}))
-        self._persist(now, sess, buckets)
+        self._persist(now, sess, buckets, orphans)
 
-    def _persist(self, now, sess, buckets):
+    def _persist(self, now, sess, buckets, orphans):
         minute = int(now // 60)
         if self.minute is None:
             self.minute = minute
         if minute != self.minute:
-            rows = {k: [round(v[0] / max(v[2], 1), 1), int(v[1] / max(v[2], 1))] for k, v in self.minute_acc.items()}
-            day = datetime.fromtimestamp(self.minute * 60).strftime("%Y%m%d")
-            with open(os.path.join(CACHE, f"load-{day}.jsonl"), "a") as f:
-                f.write(json.dumps(dict(t=self.minute * 60, s=rows)) + "\n")
+            try:
+                self._flush(self.minute * 60)
+            except Exception:
+                traceback.print_exc()
             self.minute_acc.clear()
+            self.proc_acc.clear()
+            self.n_samples = 0
             self.minute = minute
+        self.n_samples += 1
         for k, v in list(sess.items()) + [("@" + k, v) for k, v in buckets.items()]:
             a = self.minute_acc[k]
             a[0] += v["cpu"]
             a[1] += v["rss"]
             a[2] += 1
+        for sid, v in sess.items():
+            for p in v["procs"]:
+                self._acc_proc(p, sid, p["how"])
+        for o in orphans:
+            self._acc_proc(o, None, None)
+
+    def _acc_proc(self, p, sid, how):
+        k = (p["pid"], p.get("args") or p["label"])
+        a = self.proc_acc.get(k)
+        if not a:
+            a = self.proc_acc[k] = dict(cpu=0.0, rss=0, n=0, label=p["label"], cwd=p.get("cwd"), sid=sid, how=how, self=p.get("self"))
+        a["cpu"] += p["cpu"]
+        a["rss"] += p["rss"]
+        a["n"] += 1
+
+    def _flush(self, t):
+        n = max(self.n_samples, 1)
+        # CPU averages over the whole minute (a process alive for 10s of it counts for 10s); RSS over when it was seen
+        agg = [(t, k, round(v[0] / n, 1), int(v[1] / max(v[2], 1))) for k, v in self.minute_acc.items()]
+        with db() as c:
+            c.executemany("INSERT OR REPLACE INTO session_minute VALUES (?,?,?,?)", [r for r in agg if not r[1].startswith("@")])
+            c.executemany("INSERT OR REPLACE INTO bucket_minute VALUES (?,?,?,?)", [(r[0], r[1][1:], r[2], r[3]) for r in agg if r[1].startswith("@")])
+            rows = []
+            for (pid, args), a in self.proc_acc.items():
+                cpu, rss = a["cpu"] / n, a["rss"] / a["n"]
+                if cpu < PROC_MIN_CPU and rss < PROC_MIN_RSS and not a["self"]:
+                    continue
+                pk = (pid, args)
+                if pk not in self.proc_ids:
+                    cur = c.execute("INSERT INTO proc (pid, label, args, cwd, sid, how, first_t, last_t) VALUES (?,?,?,?,?,?,?,?)",
+                                    (pid, a["label"], args, a["cwd"], a["sid"], a["how"], t, t))
+                    self.proc_ids[pk] = cur.lastrowid
+                else:
+                    c.execute("UPDATE proc SET last_t=?, sid=COALESCE(sid, ?), how=COALESCE(how, ?), cwd=COALESCE(cwd, ?) WHERE id=?",
+                              (t, a["sid"], a["how"], a["cwd"], self.proc_ids[pk]))
+                rows.append((t, self.proc_ids[pk], round(cpu, 1), int(rss)))
+            c.executemany("INSERT OR REPLACE INTO proc_minute VALUES (?,?,?,?)", rows)
+        # forget identities of processes that are gone
+        live = set(self.proc_acc)
+        for pk in [k for k in self.proc_ids if k not in live]:
+            del self.proc_ids[pk]
+        if int(t) % 3600 == 0:
+            db_prune()
 
     def loop(self, meta_fn):
         while True:
@@ -546,20 +654,42 @@ def worktree_mentions():
     return _mentions["d"]
 
 
-def load_history(since):
-    rows = []
-    for f in sorted(glob.glob(os.path.join(CACHE, "load-*.jsonl"))):
-        day = datetime.strptime(os.path.basename(f)[5:13], "%Y%m%d").timestamp()
-        if day + 86400 < since:
-            continue
-        for line in open(f):
-            try:
-                r = json.loads(line)
-            except ValueError:
-                continue
-            if r["t"] >= since:
-                rows.append(r)
-    return rows
+def load_history(since, until=None):
+    """[{t, s: {sid: [cpu, rss], "@bucket": [cpu, rss]}}] per minute, oldest first."""
+    until = until or time.time() + 60
+    out = collections.OrderedDict()
+    with db() as c:
+        for t, sid, cpu, rss in c.execute("SELECT t, sid, cpu, rss FROM session_minute WHERE t >= ? AND t < ? ORDER BY t", (since, until)):
+            out.setdefault(t, {})[sid] = [cpu, rss]
+        for t, b, cpu, rss in c.execute("SELECT t, bucket, cpu, rss FROM bucket_minute WHERE t >= ? AND t < ? ORDER BY t", (since, until)):
+            out.setdefault(t, {})["@" + b] = [cpu, rss]
+    return [dict(t=t, s=v) for t, v in sorted(out.items())]
+
+
+def session_procs(sid, since=0):
+    """Every recorded process of a session: identity, CPU-seconds, peaks, and a per-minute series."""
+    with db() as c:
+        procs = {r[0]: dict(id=r[0], pid=r[1], label=r[2], args=r[3], cwd=r[4], how=r[5], first=r[6], last=r[7], series=[])
+                 for r in c.execute("SELECT id, pid, label, args, cwd, how, first_t, last_t FROM proc WHERE sid = ? AND last_t >= ?", (sid, since))}
+        if procs:
+            q = f"SELECT proc_id, t, cpu, rss FROM proc_minute WHERE proc_id IN ({','.join('?' * len(procs))}) AND t >= ? ORDER BY t"
+            for pid, t, cpu, rss in c.execute(q, (*procs, since)):
+                procs[pid]["series"].append([t, cpu, rss])
+    for p in procs.values():
+        ser = p["series"]
+        p["cpu_s"] = round(sum(x[1] for x in ser) / 100 * 60)  # % of a core for a minute -> CPU-seconds
+        p["peak_cpu"] = max((x[1] for x in ser), default=0)
+        p["peak_rss"] = max((x[2] for x in ser), default=0)
+    return sorted(procs.values(), key=lambda p: -p["cpu_s"])
+
+
+def top_procs(t0, t1, limit=15):
+    """Heaviest processes in a time window, across all sessions (and unattributed ones)."""
+    with db() as c:
+        rows = c.execute("""SELECT p.id, p.pid, p.label, p.sid, p.how, p.cwd, SUM(m.cpu) * 0.6 AS cpu_s, MAX(m.cpu), MAX(m.rss)
+                            FROM proc_minute m JOIN proc p ON p.id = m.proc_id WHERE m.t >= ? AND m.t < ?
+                            GROUP BY p.id ORDER BY cpu_s DESC LIMIT ?""", (t0, t1, limit)).fetchall()
+    return [dict(id=r[0], pid=r[1], label=r[2], sid=r[3], how=r[4], cwd=r[5], cpu_s=round(r[6]), peak_cpu=r[7], peak_rss=r[8]) for r in rows]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -754,7 +884,11 @@ def _memsize():
 # HTTP
 
 def serve(port):
+    db_init()
     sampler = Sampler()
+    with db() as c:  # keep the identity of processes still running across a restart
+        for pid_, pid, args in c.execute("SELECT id, pid, args FROM proc WHERE last_t >= ?", (time.time() - 600,)):
+            sampler.proc_ids[(pid, args)] = pid_
     # seed the in-memory history from the persisted per-minute samples so a restart doesn't blank the charts
     for r in load_history(time.time() - sampler.hist.maxlen * sampler.period):
         sess = {k: v for k, v in r["s"].items() if not k.startswith("@")}
@@ -799,6 +933,10 @@ def serve(port):
                 elif path == "/api/thread":
                     th = read_thread(q.get("sid", ""), int(q.get("limit", 60)))
                     self._send(200 if th else 404, json.dumps(th), "application/json")
+                elif path == "/api/procs":
+                    self._send(200, json.dumps(session_procs(q.get("sid", ""), float(q.get("since", 0)))), "application/json")
+                elif path == "/api/top":
+                    self._send(200, json.dumps(top_procs(float(q.get("t0", 0)), float(q.get("t1", time.time())), int(q.get("limit", 15)))), "application/json")
                 elif path == "/api/load":
                     self._send(200, json.dumps(load_history(float(q.get("since", time.time() - 86400)))), "application/json")
                 else:

@@ -110,6 +110,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #drawer { overflow-x: hidden; }
 #drawer table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; font-variant-numeric: tabular-nums; }
 #drawer td:nth-child(1) { width: 64px; color: var(--muted); } #drawer td:nth-child(3), #drawer td:nth-child(4) { width: 64px; }
+#drawer .ptable td:nth-child(3) { width: 130px; } #drawer .ptable td:nth-child(4) { width: 84px; } #drawer .ptable td:nth-child(5), #drawer .ptable td:nth-child(6) { width: 64px; }
 #drawer td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #drawer td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
 #drawer .close { position: absolute; top: 16px; right: 20px; border: 0; background: transparent; font-size: 16px; color: var(--muted); }
@@ -401,6 +402,7 @@ function renderCards() {
 const _ctx = document.createElement('canvas').getContext('2d');
 function textW(t) { _ctx.font = '11px system-ui, -apple-system, sans-serif'; return _ctx.measureText(t).width; }
 const recentPR = p => p.state !== 'OPEN' || (S.now - (p.updated || 0)) < 30 * 86400 || p.sessions?.length;
+const topCache = {}, topPending = {};
 function renderTimeline() {
   const svg = $('#timeline');
   const W = svg.clientWidth || 1200, LW = 150, PW = W - LW - 12;
@@ -541,7 +543,16 @@ function renderTimeline() {
     if (hit.kind === 'heat') {
       const t = t0 + (mx - LW) / PW * (t1 - t0), bin = hit.bins[Math.floor(t / hit.binSec)];
       if (!bin) return hideTip();
-      return tip(e, `<div class="tt">${esc(hit.lane)}</div><div class="tm">${fmtTime(Math.floor(t / hit.binSec) * hit.binSec)} · ${cores(bin[0] / bin[1])} cores attributed</div>`);
+      const b0 = Math.floor(t / hit.binSec) * hit.binSec, b1 = b0 + hit.binSec;
+      const head = `<div class="tt">${esc(hit.lane)}</div><div class="tm">${fmtTime(b0)} · ${cores(bin[0] / bin[1])} cores attributed</div>`;
+      const k = `${b0}|${b1}`, cached = topCache[k];
+      const laneTop = rows => rows.filter(r => S.sMap[r.sid]?.lane === hit.lane).slice(0, 6)
+        .map(r => `<div style="display:flex;gap:8px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label)} <span class="tm">· ${esc(S.sMap[r.sid]?.title || '')}</span></span><b>${cores(r.peak_cpu)}</b></div>`).join('');
+      tip(e, head + (cached ? (laneTop(cached) ? `<div class="tm" style="margin-top:6px">processes (peak cores)</div>${laneTop(cached)}` : '') : '<div class="tm">…</div>'));
+      if (!cached && !topPending[k]) {
+        topPending[k] = fetch(`/api/top?t0=${b0}&t1=${b1}&limit=80`).then(r => r.json()).then(rows => { topCache[k] = rows; if ($('#tip').style.display === 'block') tip(e, head + (laneTop(rows) ? `<div class="tm" style="margin-top:6px">processes (peak cores)</div>${laneTop(rows)}` : '')); });
+      }
+      return;
     }
     if (hit.kind === 'pr') {
       const p = hit.p, st = prState(p);
@@ -647,9 +658,33 @@ function drawerMeta(s) {
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
     ${s.load ? `<details><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table>${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
+    <details id="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>
     <details><summary class="k" style="cursor:pointer">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</summary><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre></details>
     ${Object.keys(s.pr_mentions).length ? `<div class="k">PRs mentioned in transcript</div><div class="when">${Object.entries(s.pr_mentions).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${ghA(k, 'pull')} ×${n}`).join(' · ')}</div>` : ''}
     <div class="k" style="display:flex;justify-content:space-between;align-items:baseline">Thread <a href="#" class="when" style="text-transform:none" onclick="const d=$('#drawer');d.scrollTop=d.scrollHeight;return false">latest ↓</a></div>`;
+}
+
+// ---------------------------------------------------------------- per-process history (SQLite, per minute)
+const fmtCpuS = sec => sec >= 3600 ? (sec / 3600).toFixed(1) + ' CPU-h' : Math.round(sec / 60) + ' CPU-min';
+function miniSpark(series, t0, t1, W = 120, H = 18) {
+  if (!series.length) return '';
+  const mx = Math.max(100, ...series.map(p => p[1])), x = t => (t - t0) / Math.max(60, t1 - t0) * W;
+  return `<svg width="${W}" height="${H}">${series.map(p => `<rect x="${x(p[0]).toFixed(1)}" y="${(H - p[1] / mx * H).toFixed(1)}" width="${Math.max(1, W / ((t1 - t0) / 60)).toFixed(1)}" height="${(p[1] / mx * H).toFixed(1)}" fill="var(--accent)"/>`).join('')}</svg>`;
+}
+const procCache = {};
+async function loadProcHistory(sid) {
+  const body = $('#phist-body'); if (!body) return;
+  const key = Math.floor(Date.now() / 60000);
+  let rows = procCache[sid]?.key === key ? procCache[sid].rows : null;
+  if (!rows) { try { rows = await (await fetch(`/api/procs?sid=${encodeURIComponent(sid)}`)).json(); } catch (e) { rows = []; } procCache[sid] = { key, rows }; }
+  if (openSid !== sid || !$('#phist-body')) return;
+  if (!rows.length) { $('#phist-body').innerHTML = 'no process history recorded for this session yet'; return; }
+  const t0 = Math.min(...rows.map(r => r.first)), t1 = Math.max(...rows.map(r => r.last)) + 60;
+  const total = rows.reduce((a, r) => a + r.cpu_s, 0);
+  $('#phist-body').className = '';
+  $('#phist-body').innerHTML = `<div class="when" style="margin-bottom:4px">${fmtCpuS(total)} across ${rows.length} processes · ${fmtTime(t0)} → ${fmtTime(t1)}</div>
+    <table class="ptable"><tr class="when"><td>pid</td><td>process</td><td>CPU over time</td><td align="right">total</td><td align="right">peak</td><td align="right">peak mem</td></tr>
+    ${rows.slice(0, 30).map(r => `<tr title="${esc(r.args || '')}${r.cwd ? '\ncwd: ' + esc(r.cwd) : ''}"><td>${r.pid}</td><td>${esc(r.label)}${r.how && r.how !== 'tree' ? ` <span class="when">via ${esc(r.how)}</span>` : ''}<div class="when">${fmtTime(r.first)} → ${fmtTime(r.last)}</div></td><td>${miniSpark(r.series, t0, t1)}</td><td align="right">${fmtCpuS(r.cpu_s)}</td><td align="right">${cores(r.peak_cpu)}</td><td align="right">${gb(r.peak_rss)}</td></tr>`).join('')}</table>`;
 }
 
 // ---------------------------------------------------------------- thread rendering
@@ -711,7 +746,9 @@ function openDrawer(sid, keepScroll) {
     d.dataset.limit = 60;
   }
   const scroll = d.scrollTop;
+  const wasOpen = [...d.querySelectorAll('#dmeta details[id]')].filter(e => e.open).map(e => e.id);
   $('#dmeta').innerHTML = drawerMeta(s);
+  for (const id of wasOpen) { const e = document.getElementById(id); if (e) e.open = true; }
   loadThread(s, +d.dataset.limit);
   d.classList.add('open');
   d.scrollTop = fresh ? 0 : scroll;

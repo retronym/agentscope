@@ -27,11 +27,20 @@ CPU is computed from cputime deltas between samples (every 5s), not `ps %cpu`. A
 3. **sticky** — it was credited earlier and has since daemonized (e.g. an sbt server reparented to launchd);
 4. **mentioned** — it runs in an extra worktree that a session's own tool calls most recently referred to.
 
-Per-minute history is kept in `~/.cache/agentscope/load-YYYYMMDD.jsonl`, so the timeline's load bands only cover time the server has been running.
+History is kept in SQLite at `~/.cache/agentscope/agentscope.db`, one row per minute, and only covers time the server has been running:
+
+- `session_minute`, `bucket_minute`: complete per-session and per-machine-group aggregates (CPU averaged over the whole minute). Kept a year.
+- `proc`, `proc_minute`: each process that used ≥ 0.5% CPU or ≥ 50 MB in a minute (plus every agent's own `claude`), with its command line, cwd, owning session and how it was attributed. A pid reused for a different command line is a new process. Kept 30 days.
+
+The session panel's **Process history** shows each process's CPU-time, peaks and a per-minute sparkline; hovering a timeline lane's heat lists the processes behind it. Ad-hoc questions are plain SQL, e.g. CPU-hours per session today:
+
+```
+sqlite3 ~/.cache/agentscope/agentscope.db "select sid, round(sum(cpu)*0.6/3600,2) cpu_h from session_minute where t > strftime('%s','now','start of day') group by sid order by cpu_h desc limit 10"
+```
 
 ## Data sources
 
-All local and read-only, except GitHub:
+All local and read-only (agentscope is a plain script: no model calls), except GitHub:
 
 - Desktop app session metadata (`~/Library/Application Support/Claude/claude-code-sessions`): titles, branches, archived flag, bound PRs, post-turn summaries, spawn links, proposal fates.
 - `~/.claude/sessions/*.json`: live pid → session, busy/idle/waiting.
