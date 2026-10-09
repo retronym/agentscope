@@ -53,7 +53,7 @@ button, input[type=search] { font: inherit; color: var(--ink); background: var(-
 input[type=search]:focus { outline: none; border-color: var(--accent); }
 button { cursor: pointer; }
 button.on { background: var(--ink); color: var(--page); }
-.chip { border-radius: 99px; display: inline-flex; gap: 5px; align-items: center; }
+.chip { border-radius: 99px; display: inline-flex; white-space: nowrap; gap: 5px; align-items: center; }
 .chip i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .chip .n { color: var(--muted); font-variant-numeric: tabular-nums; }
 .chip.on .n { color: inherit; opacity: .7; }
@@ -156,6 +156,14 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .flash { animation: flash 2.2s ease-out; border-radius: 10px; }
 @keyframes flash { 0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.crumbs { flex-basis: 100%; display: none; gap: 6px; align-items: center; overflow-x: auto; scrollbar-width: none; padding-top: 2px; }
+.crumbs.has { display: flex; }
+.crumbs .lbl { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.crumb { display: inline-flex; align-items: center; gap: 5px; max-width: 240px; font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+.crumb span { overflow: hidden; text-overflow: ellipsis; }
+.crumb i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.crumb.cur { border-color: var(--accent); color: var(--ink); }
+.crumb:hover { border-color: var(--axis); }
 .btn-link { background: none; border: 1px solid var(--border); color: var(--ink-2); font-size: 12px; }
 .copy { cursor: pointer; }
 .empty { color: var(--muted); padding: 6px 0; }
@@ -182,6 +190,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
   </div>
   <div class="ctl" id="ranges"></div>
   <span class="when" id="updated"></span>
+  <nav id="crumbs" class="crumbs"></nav>
 </header>
 <main>
   <section>
@@ -305,7 +314,7 @@ function render() {
   $('#t-prs').textContent = `${open.length} · ${open.filter(p => p.ci === 'FAILURE' || p.ci === 'ERROR').length}`;
   $('#updated').innerHTML = (S.gh_err ? `<span class="err" title="${esc(S.gh_err)}">GitHub error</span> · ` : '') +
     (S.gh_t ? 'GitHub ' + ago(S.gh_t) : 'GitHub loading…') + (S.index_ready ? '' : ' · indexing transcripts…');
-  renderChips(); renderMachine(); renderCards(); renderTimeline(); renderEnds();
+  renderChips(); renderCrumbs(); renderMachine(); renderCards(); renderTimeline(); renderEnds();
   if (openSid && S.sMap[openSid]) openDrawer(openSid, true);
 }
 
@@ -763,6 +772,23 @@ async function loadThread(s, limit, around) {
   if (openSid === s.sid) { el.innerHTML = html; el.dataset.key = key; applyFocus(); }
 }
 
+// ---------------------------------------------------------------- breadcrumbs: recently viewed sessions (per browser)
+const CRUMBS_MAX = 12;
+let crumbs = (() => { try { return JSON.parse(localStore('crumbs') || '[]'); } catch (e) { return []; } })();
+function pushCrumb(sid) {
+  crumbs = [sid, ...crumbs.filter(x => x !== sid)].slice(0, CRUMBS_MAX);
+  localStore('crumbs', JSON.stringify(crumbs));
+  renderCrumbs();
+}
+function renderCrumbs() {
+  const el = $('#crumbs'), live = crumbs.filter(sid => S?.sMap[sid]);
+  el.classList.toggle('has', live.length > 0);
+  el.innerHTML = live.length ? `<span class="lbl">recent</span>` + live.map(sid => {
+    const s = S.sMap[sid], st = sessionState(s);
+    return `<button class="crumb ${sid === openSid ? 'cur' : ''}" title="${esc(s.lane)} · ${esc(s.title)} · ${esc(st.label)}" onclick="openDrawer('${sid}')"><i style="background:${st.c}"></i><span>${esc(s.title)}</span></button>`;
+  }).join('') + `<button class="crumb" title="clear the trail" onclick="crumbs=[];localStore('crumbs','[]');renderCrumbs()">✕</button>` : '';
+}
+
 function openDrawerAt(sid, idx) {
   openDrawer(sid);
   focusIdx = idx;
@@ -773,6 +799,7 @@ function openDrawer(sid, keepScroll) {
   const d = $('#drawer');
   const fresh = d.dataset.sid !== sid || !keepScroll;
   openSid = sid;
+  if (d.dataset.sid !== sid) pushCrumb(sid);
   if (fresh) {
     d.dataset.sid = sid;
     d.innerHTML = `<button class="close" onclick="closeDrawer()">✕</button><div id="dmeta"></div><div id="dthread"><div class="empty">loading thread…</div></div>`;
@@ -786,7 +813,7 @@ function openDrawer(sid, keepScroll) {
   d.classList.add('open');
   d.scrollTop = fresh ? 0 : scroll;
 }
-function closeDrawer() { openSid = null; $('#drawer').classList.remove('open'); }
+function closeDrawer() { openSid = null; $('#drawer').classList.remove('open'); delete $('#drawer').dataset.sid; renderCrumbs(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
 
 // ---------------------------------------------------------------- tooltip

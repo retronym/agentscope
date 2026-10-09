@@ -18,6 +18,8 @@ With a dozen-plus sessions across several repos, three things get lost:
 
 **Search thread contents** (press `/`): full-text search (SQLite FTS5, stemmed, all terms required, last term a prefix, `"quoted phrases"`) over every prompt and agent message. Hits are grouped by session with highlighted snippets; clicking one opens the thread scrolled to that message.
 
+A **recent** strip under the header keeps the last 12 sessions you opened (per browser), newest first.
+
 Status chips (waiting for you · active · working · GitHub) filter all three views. Click any session for its last ask, the agent's last words, how it started, processes, family and a `claude --resume` command; **↗ Claude** opens it in the desktop app via `claude://code/continue?session=local_<id>` (unarchived desktop sessions only). The detail panel is a thread view of the transcript: markdown-rendered messages, with runs of tool calls collapsed. Every PR and issue reference is a link; a bare `#N` resolves to a known PR with that number in the session's repo lane (so a fork checkout still links upstream PRs), else to the session's own remote.
 
 ## Load attribution
