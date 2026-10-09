@@ -79,8 +79,11 @@ async function loadProfile(id, force) {
 
 function canvasFor(id, prefix, h) {
   const c = document.getElementById(`${prefix}-${id}`); if (!c) return null;
-  const w = c.parentElement.clientWidth, dpr = window.devicePixelRatio || 1;
-  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.width = w + 'px'; c.style.height = h + 'px'; }
+  // CSS gives the canvas its width (100% of the content box, padding excluded); the backing store follows it
+  c.style.height = h + 'px';
+  const w = c.clientWidth, dpr = window.devicePixelRatio || 1;
+  if (!w) return null;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
   const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
   g.font = '11px ' + css('--font-ui'); g.textBaseline = 'middle';
   return [c, g, w];
@@ -89,8 +92,8 @@ function canvasFor(id, prefix, h) {
 function drawProfile(id) {
   const p = prof[id], s = p?.summary, stat = document.getElementById(`profstat-${id}`);
   if (!s) { if (stat) stat.textContent = p?.error || 'loading…'; return; }
-  const gcMs = s.gc.reduce((a, x) => a + x[1], 0);
-  if (stat) stat.textContent = p.error ? '⚠ ' + p.error : `${s.threads.length} active threads · ${s.gc.length} GCs, ${gcMs >= 1000 ? (gcMs / 1000).toFixed(1) + ' s' : gcMs + ' ms'} paused${p.sel ? ' · selection ' + clock(p.sel[1] - p.sel[0]) : ' · drag across the heatmap or lanes to pick a range'}`;
+  const gcMs = s.gc.reduce((a, x) => a + x[1], 0) / 1000;  // pauses come in µs
+  if (stat) stat.textContent = p.error ? '⚠ ' + p.error : `${s.threads.length} active threads · ${s.gc.length} GCs, ${gcMs >= 1000 ? (gcMs / 1000).toFixed(1) + ' s' : gcMs.toFixed(gcMs < 10 ? 1 : 0) + ' ms'} paused${p.sel ? ' · selection ' + clock(p.sel[1] - p.sel[0]) : ' · drag across the heatmap or lanes to pick a range'}`;
   const ink = css('--ink'), muted = css('--muted'), grid = css('--grid'), accent = css('--accent');
   const nb = s.bins, x0 = LABEL_W, xOf = (w, t) => x0 + (t - s.since) / (nb * s.bin) * (w - x0);
   const selRect = (g, w, h) => {
@@ -111,7 +114,7 @@ function drawProfile(id) {
     }
     // GC above the heatmap: per bin, shaded by the share of the bin spent in pauses (10% or more is solid)
     const gcBins = new Float64Array(nb);
-    for (const [t, d] of s.gc) { const b = Math.floor((t - s.since) / s.bin); if (b >= 0 && b < nb) gcBins[b] += d; }
+    for (const [t, us] of s.gc) { const b = Math.floor((t - s.since) / s.bin); if (b >= 0 && b < nb) gcBins[b] += us / 1000; }
     g.fillStyle = css('--critical');
     for (let b = 0; b < nb; b++) if (gcBins[b] > 0) { g.globalAlpha = Math.min(1, 0.2 + gcBins[b] / s.bin * 8); g.fillRect(x0 + b * cw, 0, Math.ceil(cw), 7); }
     g.globalAlpha = 1;
@@ -251,3 +254,7 @@ function activityLine(j, n = 3) {
   if (!a?.length) return '';
   return a.slice(0, n).map(([name, pct, threads]) => `${esc(name)} <b>${pct}%</b>${threads > 1 ? `<span class="sub"> ×${threads}</span>` : ''}`).join(' · ');
 }
+
+// Canvases are drawn at their current width: redraw when it changes
+let _resizeT;
+addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' ? drawFlame('all') : drawProfile(+id)); }, 100); });

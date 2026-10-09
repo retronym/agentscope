@@ -27,12 +27,14 @@ import java.util.concurrent.Executors;
  * {"id": 7, "op": "activities", "pid": 123, "since": ms}    → {"id": 7, "activities": [{activity, samples, threads}]}
  * {"id": 8, "op": "minute", "pid": 123, "t0": ms, "t1": ms}  → {"id": 8, "minute": {groups, rows}}   exact, for storage
  * {"id": 9, "op": "stacks", "pid": 123, "ids": [stack ids]}   → {"id": 9, "stacks": {frames, stacks}}  definitions
+ * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?}   async-profiler captures; base: a diff
  * anything failing                                       → {"id": n, "error": "..."}
  * </pre>
  */
 public final class Main {
   private static final JSON JSON_ = JSON.std;
   private static Recordings recordings;
+  private static final Captures captures = new Captures();
 
   public static void main(String[] args) throws Exception {
     recordings = new Recordings();
@@ -90,6 +92,16 @@ public final class Main {
           resp.put("flame", recordings.profile(pid(req)).flame(num(req, "t0", 0), num(req, "t1", Long.MAX_VALUE),
               String.valueOf(req.getOrDefault("kind", "cpu")), threads, 0.002, Boolean.TRUE.equals(req.get("reverse"))));
         }
+        case "capture_stats" -> resp.put("stats", captures.load(path(req, "path")).stats());
+        case "capture_flame" -> {
+          List<Long> threads = new ArrayList<>();
+          if (req.get("threads") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) threads.add(n.longValue());
+          String kind = String.valueOf(req.getOrDefault("kind", "cpu"));
+          boolean reverse = Boolean.TRUE.equals(req.get("reverse"));
+          resp.put("flame", req.get("base") != null
+              ? Profile.diff(captures.load(path(req, "base")), captures.load(path(req, "path")), kind, reverse, 0.002)
+              : captures.load(path(req, "path")).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse));
+        }
         default -> throw new IllegalArgumentException("unknown op: " + op);
       }
       return JSON_.asString(resp);
@@ -103,6 +115,11 @@ public final class Main {
         return "{\"id\":null,\"error\":\"unserializable\"}";
       }
     }
+  }
+
+  private static java.nio.file.Path path(Map<String, Object> req, String key) {
+    if (req.get(key) instanceof String s && s.endsWith(".jfr")) return java.nio.file.Path.of(s);
+    throw new IllegalArgumentException(key + ": a .jfr file required");
   }
 
   private static long num(Map<String, Object> req, String key, long dflt) {

@@ -21,9 +21,10 @@ import java.util.Map;
 public final class Profile {
   public static final long WINDOW_MS = 30 * 60_000;
 
-  /** Sample kinds, also the {@code kind} names queries take. */
-  public static final int CPU = 0, NATIVE = 1, ALLOC = 2, LOCK = 3, PARK = 4;
-  static final List<String> KINDS = List.of("cpu", "native", "alloc", "lock", "park");
+  /** Sample kinds, also the {@code kind} names queries take. The last four come from async-profiler captures. */
+  public static final int CPU = 0, NATIVE = 1, ALLOC = 2, LOCK = 3, PARK = 4, WALL = 5, LIVE = 6, NATIVEMEM = 7, NATIVELOCK = 8;
+  static final List<String> KINDS = List.of("cpu", "native", "alloc", "lock", "park", "wall", "live", "nativemem", "nativelock");
+  private final long[] kindTotals = new long[KINDS.size()];
 
   // interning
   private final Map<String, Integer> frameIds = new HashMap<>();
@@ -39,7 +40,7 @@ public final class Profile {
   private final Ring samples = new Ring();
   // per-thread CPU (jdk.ThreadCPULoad), stored like samples: time, thread, -, -, load in 1/10000 of a core
   private final Ring cpu = new Ring();
-  // GC pauses: time, -, -, -, duration ms; names kept alongside
+  // GC pauses: time, -, -, -, duration µs; names kept alongside
   private final Ring gcs = new Ring();
   private final List<String> gcNames = new ArrayList<>();
 
@@ -62,13 +63,20 @@ public final class Profile {
       case "jdk.ObjectAllocationSample" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), ALLOC, e.getLong("weight"));
       case "jdk.JavaMonitorEnter" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), LOCK, e.getDuration().toMillis());
       case "jdk.ThreadPark" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), PARK, e.getDuration().toMillis());
+      // async-profiler's events (in capture files); weights are what its own converter totals
+      case "profiler.WallClockSample" -> sample(t, e.getThread("sampledThread"), e.getStackTrace(), WALL, e.hasField("samples") ? Math.max(1, e.getInt("samples")) : 1);
+      case "jdk.ObjectAllocationInNewTLAB", "jdk.ObjectAllocationOutsideTLAB" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), ALLOC,
+          e.hasField("tlabSize") && e.getLong("tlabSize") > 0 ? e.getLong("tlabSize") : e.getLong("allocationSize"));
+      case "profiler.LiveObject" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), LIVE, e.getLong("allocationSize"));
+      case "profiler.Malloc" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), NATIVEMEM, e.getLong("size"));
+      case "profiler.NativeLock" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), NATIVELOCK, e.getDuration().toMillis());
       case "jdk.ThreadCPULoad" -> {
         // user and system are fractions of the whole machine; scale to cores
         double load = (e.getFloat("user") + e.getFloat("system")) * ncpu;
         cpu.add(t, thread(e.getThread("eventThread")), 0, 0, Math.round(load * 10_000));
       }
       case "jdk.GarbageCollection" -> {
-        gcs.add(t, 0, 0, 0, e.getDuration("sumOfPauses").toMillis());
+        gcs.add(t, 0, 0, 0, e.getDuration("sumOfPauses").toNanos() / 1000);  // µs: most pauses are well under a millisecond
         gcNames.add(e.getString("name"));
       }
       default -> { }
@@ -79,6 +87,7 @@ public final class Profile {
   private void sample(long t, RecordedThread th, RecordedStackTrace st, int kind, long weight) {
     if (th == null) return;
     samples.add(t, thread(th), stack(st), kind, weight);
+    kindTotals[kind] += weight;
   }
 
   private int thread(RecordedThread th) {
@@ -114,20 +123,24 @@ public final class Profile {
     return id;
   }
 
-  private static final java.util.Set<String> JAVA_FRAME_TYPES = java.util.Set.of("Interpreted", "JIT compiled", "Inlined");
+  // JFR's and async-profiler's names for frames of Java code; anything else (Native, C++, Kernel, whatever comes next) isn't
+  private static final java.util.Set<String> JAVA_FRAME_TYPES = java.util.Set.of("Interpreted", "JIT compiled", "Inlined", "C1 compiled", "C2 compiled");
+  private static final java.util.regex.Pattern LIBRARY = java.util.regex.Pattern.compile("(^|/)lib[^/]*\\.(dylib|so)(\\.[\\d.]+)?$|\\.dll$|^\\[");
 
   /**
-   * A frame is an opaque string from here on. Java frames are "class.method"; anything else keeps whatever its producer
-   * called it, tagged with its frame type (" [Native]", and from async-profiler " [C++]", " [Kernel]", stubs...), so
-   * nothing downstream has to parse frame names to tell them apart.
+   * A frame is an opaque string from here on, decided by its frame type, never by parsing its name. Java frames are
+   * "class.method". Others are tagged with their type (" [Native]", " [C++]", " [Kernel]"...); their "class" is dropped
+   * when it's really a library (async-profiler puts libjvm.dylib there), kept when it's a Java class (a JNI method).
    */
   private int frame(RecordedFrame f) {
     RecordedMethod m = f.getMethod();
-    String type = m == null ? null : m.getType() == null ? null : m.getType().getName();
-    String name = m == null ? "?" : type == null || type.isEmpty() ? m.getName() : type + "." + m.getName();
+    if (m == null) return frame("?");
+    String owner = m.getType() == null ? null : m.getType().getName();
     String ft = f.getType();
-    if (ft != null && !JAVA_FRAME_TYPES.contains(ft)) name += " [" + ft + "]";
-    return frame(name);
+    boolean java = ft == null || JAVA_FRAME_TYPES.contains(ft);
+    boolean library = owner == null || owner.isEmpty() || !java && ("C++".equals(ft) || "Kernel".equals(ft) || LIBRARY.matcher(owner).find());
+    String name = library ? m.getName() : owner + "." + m.getName();
+    return frame(java ? name : name + " [" + ft + "]");
   }
 
   private int frame(String name) {
@@ -340,12 +353,69 @@ public final class Profile {
   public synchronized Map<String, Object> stats() {
     Map<String, Object> m = new LinkedHashMap<>();
     m.put("samples", samples.size());
+    Map<String, Long> kinds = new LinkedHashMap<>();
+    for (int k = 0; k < KINDS.size(); k++) if (kindTotals[k] > 0) kinds.put(KINDS.get(k), kindTotals[k]);
+    m.put("kinds", kinds);
     m.put("stacks", stacks.size());
     m.put("frames", frames.size());
     m.put("threads", threadNames.size());
     m.put("first", first == Long.MAX_VALUE ? null : first);
     m.put("last", last == 0 ? null : last);
     return m;
+  }
+
+  /** Weights by stack (frame names, root first; reversed if asked), for one kind: what a diff compares. */
+  public synchronized Map<List<String>, Long> collapsed(String kindName, boolean reverse) {
+    int kind = KINDS.indexOf(kindName);
+    Map<Integer, Long> byStack = new HashMap<>();
+    for (int i = samples.lo; i < samples.n; i++) if (samples.c[i] == kind) byStack.merge(samples.b[i], samples.w[i], Long::sum);
+    Map<List<String>, Long> out = new HashMap<>();
+    byStack.forEach((s, w) -> {
+      List<String> path = new ArrayList<>();
+      if (s >= 0) for (int f : stacks.get(s)) path.add(frames.get(f));
+      if (reverse) java.util.Collections.reverse(path);
+      out.merge(path, w, Long::sum);
+    });
+    return out;
+  }
+
+  /**
+   * A differential flame graph: the shape and values of {@code after}, each node also carrying its value in
+   * {@code before}, as [name, value, children, 0, before]. Nodes only in {@code before} appear with value 0.
+   */
+  public static Map<String, Object> diff(Profile before, Profile after, String kind, boolean reverse, double minShare) {
+    Map<List<String>, Long> a = before.collapsed(kind, reverse), b = after.collapsed(kind, reverse);
+    long ta = a.values().stream().mapToLong(x -> x).sum(), tb = b.values().stream().mapToLong(x -> x).sum();
+    DiffNode root = new DiffNode();
+    a.forEach((path, w) -> root.add(path, 0, w, true));
+    b.forEach((path, w) -> root.add(path, 0, w, false));
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("kind", kind);
+    out.put("reverse", reverse);
+    out.put("diff", true);
+    out.put("total", tb);
+    out.put("before_total", ta);
+    out.put("root", root.toJson("all", Math.max(1, (long) (Math.max(ta, tb) * minShare))));
+    return out;
+  }
+
+  private static final class DiffNode {
+    long before, after;
+    Map<String, DiffNode> kids;
+
+    void add(List<String> path, int i, long w, boolean isBefore) {
+      if (isBefore) before += w; else after += w;
+      if (i == path.size()) return;
+      if (kids == null) kids = new HashMap<>();
+      kids.computeIfAbsent(path.get(i), x -> new DiffNode()).add(path, i + 1, w, isBefore);
+    }
+
+    List<Object> toJson(String name, long min) {
+      List<Object> ks = new ArrayList<>();
+      if (kids != null) kids.entrySet().stream().filter(e -> Math.max(e.getValue().after, e.getValue().before) >= min)
+          .sorted((x, y) -> Long.compare(y.getValue().after, x.getValue().after)).forEach(e -> ks.add(e.getValue().toJson(e.getKey(), min)));
+      return List.of(name, after, ks, 0, before);
+    }
   }
 
   // ---------------------------------------------------------------- plumbing

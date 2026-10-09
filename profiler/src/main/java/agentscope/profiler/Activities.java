@@ -46,8 +46,12 @@ public final class Activities {
       if (!JAVA.matcher(f).matches()) continue;
       java = true;
       if (JDK.matcher(f).find()) continue;
+      // its package: the segments before the class name (which starts upper case), at most three deep
       String[] parts = f.split("\\.");
-      return parts.length > 3 ? parts[0] + "." + parts[1] + "." + parts[2] : parts[0];
+      StringBuilder pkg = new StringBuilder();
+      for (int k = 0; k < Math.min(3, parts.length - 2) && !parts[k].isEmpty() && Character.isLowerCase(parts[k].charAt(0)); k++)
+        pkg.append(k == 0 ? "" : ".").append(parts[k]);
+      return pkg.isEmpty() ? parts[0] : pkg.toString();
     }
     return java ? "JDK" : "native";
   }

@@ -41,7 +41,7 @@ class RecordingsTest {
 
       // the fixture's busy thread is in agentscope.profiler code: no rule names it, so it's named after its package
       List<Map<String, Object>> acts = p.activities(t0);
-      assertEquals("agentscope.profiler.Fixture", acts.getFirst().get("activity"), acts.toString());
+      assertEquals("agentscope.profiler", acts.getFirst().get("activity"), acts.toString());
 
       // for storage: exact weights per stack, and stack definitions on request
       Map<String, Object> minute = p.minute(t0, Long.MAX_VALUE);

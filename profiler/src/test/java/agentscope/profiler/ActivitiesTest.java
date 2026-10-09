@@ -22,6 +22,9 @@ class ActivitiesTest {
   @Test
   void fallsBackToThePackage() {
     assertEquals("com.example.app", of("java.lang.Thread.run", "com.example.app.Server.handle", "java.lang.String.indexOf"));
+    // a class and its lambdas are one package
+    assertEquals("agentscope.profiler", of("java.lang.Thread.run", "agentscope.profiler.Fixture$$Lambda.0x0000008001000c30.run"));
+    assertEquals("agentscope.profiler", of("java.lang.Thread.run", "agentscope.profiler.Fixture.work"));
     assertEquals("JDK", of("java.lang.Thread.run", "java.util.concurrent.ForkJoinWorkerThread.run"));
   }
 
