@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentscope</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f2f1ed;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s7: #4a3aa7;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --merged: #4a3aa7; --busy: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s7: #9085e9;
+    --merged: #9085e9; --busy: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s7: #9085e9;
+  --merged: #9085e9; --busy: #3987e5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: inherit; }
+header { position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
+.tile { display: flex; flex-direction: column; min-width: 90px; }
+.tile .v { font-size: 18px; font-weight: 600; }
+.tile .l { color: var(--muted); font-size: 11px; }
+.spacer { flex: 1; }
+.ctl { display: flex; gap: 6px; align-items: center; }
+button, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; }
+button { cursor: pointer; }
+button.on { background: var(--ink); color: var(--page); }
+label.chk { color: var(--ink-2); display: flex; gap: 4px; align-items: center; cursor: pointer; }
+main { padding: 14px 20px 60px; display: flex; flex-direction: column; gap: 22px; }
+section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
+section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.card { padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; position: relative; }
+.card:hover { border-color: var(--axis); }
+.card .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .meta { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .sum { color: var(--ink-2); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.card .load { display: flex; gap: 10px; align-items: center; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12px; }
+.card.waiting { box-shadow: inset 3px 0 0 var(--warning); }
+.card.busy { box-shadow: inset 3px 0 0 var(--busy); }
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
+.badge i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.pr { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); text-decoration: none; white-space: nowrap; color: var(--ink-2); }
+.pr:hover { border-color: var(--axis); }
+.pr i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+.lane-chip { font-size: 11px; color: var(--ink-2); background: var(--surface-2); border-radius: 4px; padding: 0 5px; }
+#machine { padding: 10px 12px; display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: center; }
+.legend { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.legend div { display: flex; gap: 6px; align-items: center; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend b { margin-left: auto; color: var(--ink); font-weight: 500; }
+#timeline-wrap { overflow-x: hidden; position: relative; }
+#timeline text { font-size: 11px; fill: var(--ink-2); }
+#timeline .lane-label { font-weight: 600; fill: var(--ink); font-size: 12px; }
+#timeline .tick { fill: var(--muted); font-size: 10.5px; }
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 7px 9px; max-width: 420px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); display: none; }
+.tip .tt { font-weight: 600; margin-bottom: 2px; }
+.tip .tm { color: var(--muted); }
+.tip p { margin: 4px 0 0; color: var(--ink-2); white-space: pre-wrap; }
+.ends { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+.ends .panel { padding: 10px 12px; }
+.ends h3 { font-size: 12.5px; margin: 0 0 6px; display: flex; gap: 6px; align-items: center; }
+.ends h3 .n { color: var(--muted); font-weight: 400; }
+.item { padding: 6px 0; border-top: 1px solid var(--border); cursor: pointer; }
+.item:first-of-type { border-top: 0; }
+.item .a { display: flex; gap: 6px; align-items: center; }
+.item .a .x { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .b { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.when { color: var(--muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); background: var(--surface); border-left: 1px solid var(--axis); z-index: 10; transform: translateX(100%); transition: transform .15s; overflow-y: auto; padding: 16px 18px 40px; }
+#drawer.open { transform: none; box-shadow: -10px 0 30px rgba(0,0,0,.3); }
+#drawer h2 { margin: 0 0 4px; font-size: 16px; }
+#drawer .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
+#drawer pre { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow: auto; }
+#drawer table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+#drawer td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
+#drawer .close { position: absolute; top: 12px; right: 14px; }
+.copy { cursor: pointer; }
+.empty { color: var(--muted); padding: 6px 0; }
+.err { color: var(--critical); }
+@media (max-width: 700px) { #machine { grid-template-columns: 1fr; } .ends { grid-template-columns: 1fr; } header, main { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>agentscope</h1>
+  <div class="tile"><span class="v" id="t-live">–</span><span class="l">live sessions</span></div>
+  <div class="tile"><span class="v" id="t-wait">–</span><span class="l">waiting on you</span></div>
+  <div class="tile"><span class="v" id="t-cpu">–</span><span class="l">agent CPU (cores)</span></div>
+  <div class="tile"><span class="v" id="t-mem">–</span><span class="l">agent memory</span></div>
+  <div class="tile"><span class="v" id="t-prs">–</span><span class="l">open PRs (30d) · CI failing</span></div>
+  <div class="spacer"></div>
+  <div class="ctl">
+    <input type="search" id="q" placeholder="filter (title, lane, branch, PR)…" size="26">
+    <label class="chk"><input type="checkbox" id="show-archived"> archived</label>
+  </div>
+  <div class="ctl" id="ranges"></div>
+  <span class="when" id="updated"></span>
+</header>
+<main>
+  <section>
+    <h2>Now <span class="sub">live sessions and anything active in the last 2h · CPU from cputime deltas, attributed by process ancestry (else by cwd)</span></h2>
+    <div class="panel" id="machine"></div>
+    <div style="height:10px"></div>
+    <div class="cards" id="cards"></div>
+    <div id="orphans"></div>
+  </section>
+  <section>
+    <h2>Timeline <span class="sub">one lane per repo · bar = agent activity, ● = your prompt, ◇ PR opened, ◆ merged/closed (color = PR state), dashed = spawned-from · shaded band = CPU</span></h2>
+    <div class="panel" id="timeline-wrap"><svg id="timeline" width="100%"></svg></div>
+  </section>
+  <section>
+    <h2>Loose ends <span class="sub">things that fall out of your head</span></h2>
+    <div class="ends" id="ends"></div>
+  </section>
+</main>
+<div id="drawer"></div>
+<div class="tip" id="tip"></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const RANGES = [['24h', 1], ['3d', 3], ['7d', 7], ['30d', 30]];
+let S = null, LOAD = [], range = +(localStore('range') || 3), query = '', showArchived = false;
+
+function localStore(k, v) { try { if (v === undefined) return localStorage.getItem('as.' + k); localStorage.setItem('as.' + k, v); } catch (e) { return null; } }
+function ago(t) {
+  if (!t) return '';
+  const d = S.now - t;
+  if (d < 60) return 'just now';
+  if (d < 3600) return Math.round(d / 60) + 'm ago';
+  if (d < 86400) return Math.round(d / 3600) + 'h ago';
+  return Math.round(d / 86400) + 'd ago';
+}
+const gb = b => (b / 1e9).toFixed(b > 10e9 ? 0 : 1) + ' GB';
+const cores = pct => (pct / 100).toFixed(1);
+const fmtTime = t => new Date(t * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+
+// ---------------------------------------------------------------- status vocab (icon + label, never color alone)
+function sessionState(s) {
+  if (s.live) {
+    if (s.live.status === 'waiting') return { k: 'waiting', label: '⏸ waiting' + (s.live.waiting ? ': ' + s.live.waiting : ''), c: 'var(--warning)' };
+    if (s.live.status === 'busy') return { k: 'busy', label: '▶ working', c: 'var(--busy)' };
+    return { k: 'idle', label: '○ idle', c: 'var(--muted)' };
+  }
+  if (s.archived) return { k: 'archived', label: '▪ archived', c: 'var(--axis)' };
+  return { k: 'ended', label: '· not running', c: 'var(--axis)' };
+}
+function prState(p) {
+  if (p.state === 'MERGED') return { label: 'merged', c: 'var(--merged)', icon: '⇲' };
+  if (p.state === 'CLOSED') return { label: 'closed', c: 'var(--muted)', icon: '✕' };
+  if (p.ci === 'FAILURE' || p.ci === 'ERROR') return { label: 'CI failing', c: 'var(--critical)', icon: '✕' };
+  if (p.review === 'CHANGES_REQUESTED') return { label: 'changes requested', c: 'var(--serious)', icon: '!' };
+  if (p.mergeable === 'CONFLICTING') return { label: 'conflicts', c: 'var(--serious)', icon: '⚠' };
+  if (p.ci === 'PENDING' || p.ci === 'EXPECTED') return { label: 'CI running', c: 'var(--warning)', icon: '◔' };
+  if (p.review === 'APPROVED') return { label: 'approved', c: 'var(--good)', icon: '✓' };
+  if (p.draft) return { label: 'draft', c: 'var(--axis)', icon: '◌' };
+  if (p.ci === 'SUCCESS') return { label: 'CI green', c: 'var(--good)', icon: '✓' };
+  return { label: (p.state || 'open').toLowerCase(), c: 'var(--muted)', icon: '○' };
+}
+function prChip(key) {
+  const p = S.prMap[key]; if (!p) return '';
+  const st = prState(p);
+  return `<a class="pr" href="${esc(p.url)}" target="_blank" title="${esc(p.title)} — ${esc(st.label)}" onclick="event.stopPropagation()"><i style="background:${st.c}"></i>${esc(p.repo.split('/')[0] === S.gh_login ? '' : p.repo.split('/')[0] + '/')}${esc(p.lane)}#${p.number} <span style="color:var(--muted)">${st.icon} ${esc(st.label)}</span></a>`;
+}
+
+function matches(s) {
+  if (!showArchived && s.archived && !s.live) return false;
+  if (!query) return true;
+  const hay = [s.title, s.lane, s.branch, s.cwd, ...(s.prs || []), s.summary?.status_detail].join(' ').toLowerCase();
+  return query.split(/\s+/).every(w => hay.includes(w));
+}
+
+// ---------------------------------------------------------------- fetch
+async function refresh() {
+  try {
+    const r = await fetch('/api/state');
+    S = await r.json();
+  } catch (e) { $('#updated').innerHTML = '<span class="err">server unreachable</span>'; return; }
+  S.prMap = Object.fromEntries(S.prs.map(p => [p.key, p]));
+  S.sMap = Object.fromEntries(S.sessions.map(s => [s.sid, s]));
+  render();
+}
+async function refreshLoad() {
+  try { LOAD = await (await fetch('/api/load?since=' + (Date.now() / 1000 - range * 86400))).json(); } catch (e) { LOAD = []; }
+  if (S) renderTimeline();
+}
+
+function render() {
+  const live = S.sessions.filter(s => s.live);
+  const wait = live.filter(s => s.live.status === 'waiting');
+  const agents = S.machine.agents || { cpu: 0, rss: 0 };
+  const open = S.prs.filter(p => p.state === 'OPEN' && !p.foreign && recentPR(p));
+  $('#t-live').textContent = `${live.length}`;
+  $('#t-live').title = `${live.filter(s => s.live.status === 'busy').length} working, ${wait.length} waiting, ${live.filter(s => s.live.status === 'idle').length} idle`;
+  $('#t-wait').textContent = wait.length;
+  $('#t-wait').style.color = wait.length ? 'var(--warning)' : '';
+  $('#t-cpu').textContent = `${cores(agents.cpu)} / ${S.ncpu}`;
+  $('#t-mem').textContent = gb(agents.rss);
+  $('#t-prs').textContent = `${open.length} · ${open.filter(p => p.ci === 'FAILURE' || p.ci === 'ERROR').length}`;
+  $('#updated').innerHTML = (S.gh_err ? `<span class="err" title="${esc(S.gh_err)}">GitHub error</span> · ` : '') +
+    (S.gh_t ? 'GitHub ' + ago(S.gh_t) : 'GitHub loading…') + (S.index_ready ? '' : ' · indexing transcripts…');
+  renderMachine(); renderCards(); renderTimeline(); renderEnds();
+  if (openSid && S.sMap[openSid]) openDrawer(openSid, true);
+}
+
+// ---------------------------------------------------------------- machine strip
+const MACHINE_KEYS = [['agents', '--s1', 'agents'], ['Claude app', '--s2', 'Claude app'], ['system / security', '--s3', 'system / security'], ['other', '--s4', 'other']];
+function renderMachine() {
+  const m = S.machine, h = S.machine_hist;
+  const tot = Object.values(m).reduce((a, b) => a + b.cpu, 0);
+  const leg = MACHINE_KEYS.map(([k, c, l]) => `<div><i style="background:var(${c})"></i>${l}<b>${cores(m[k]?.cpu || 0)} cores · ${gb(m[k]?.rss || 0)}</b></div>`).join('');
+  const W = Math.max(300, ($('#machine').clientWidth || 900) - 300), H = 70;
+  let svg = '';
+  if (h.length > 1) {
+    const t0 = h[0][0], t1 = h[h.length - 1][0];
+    const maxY = Math.max(S.ncpu * 100 * 0.5, ...h.map(r => Object.values(r[1]).reduce((a, b) => a + b, 0)));
+    const x = t => (t - t0) / Math.max(1, t1 - t0) * W, y = v => H - v / maxY * H;
+    let base = h.map(() => 0);
+    for (const [k, c] of MACHINE_KEYS) {
+      const top = h.map((r, i) => base[i] + (r[1][k] || 0));
+      const pts = h.map((r, i) => `${x(r[0]).toFixed(1)},${y(top[i]).toFixed(1)}`).join(' ') + ' ' + h.map((r, i) => `${x(r[0]).toFixed(1)},${y(base[i]).toFixed(1)}`).reverse().join(' ');
+      svg += `<polygon points="${pts}" fill="var(${c})" opacity=".85" stroke="var(--surface)" stroke-width="1"/>`;
+      base = top;
+    }
+    const capY = y(S.ncpu * 100);
+    if (capY > 0) svg += `<line x1="0" x2="${W}" y1="${capY}" y2="${capY}" stroke="var(--axis)" stroke-dasharray="3 3"/>`;
+    svg += `<text x="0" y="${H + 12}" class="tick" style="fill:var(--muted);font-size:10.5px">${ago(t0)}</text><text x="${W}" y="${H + 12}" text-anchor="end" style="fill:var(--muted);font-size:10.5px">now</text>`;
+    svg += `<rect id="mh" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>`;
+  } else svg = `<text x="0" y="30" style="fill:var(--muted)">collecting samples…</text>`;
+  $('#machine').innerHTML = `<div class="legend"><div style="color:var(--ink);font-weight:600">Machine CPU<b>${cores(tot)} / ${S.ncpu} cores</b></div>${leg}</div><svg width="${W}" height="${H + 16}">${svg}</svg>`;
+  const mh = $('#mh');
+  if (mh) {
+    const t0 = h[0][0], t1 = h[h.length - 1][0];
+    mh.onmousemove = e => {
+      const r = mh.getBoundingClientRect(), t = t0 + (e.clientX - r.left) / r.width * (t1 - t0);
+      const row = h.reduce((a, b) => Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a);
+      tip(e, `<div class="tt">${new Date(row[0] * 1000).toLocaleTimeString()}</div>` + MACHINE_KEYS.map(([k, c, l]) => `<div><span style="color:var(${c})">■</span> ${l}: ${cores(row[1][k] || 0)} cores</div>`).join(''));
+    };
+    mh.onmouseleave = hideTip;
+  }
+}
+
+// ---------------------------------------------------------------- cards
+function spark(s) {
+  if (!s.spark || s.spark.length < 2) return '';
+  const W = 90, H = 20, mx = Math.max(100, ...s.spark.map(p => p[1]));
+  const pts = s.spark.map((p, i) => `${(i / (s.spark.length - 1) * W).toFixed(1)},${(H - p[1] / mx * H).toFixed(1)}`).join(' ');
+  return `<svg width="${W}" height="${H}"><polyline points="${pts}" fill="none" stroke="var(--s1)" stroke-width="1.5"/></svg>`;
+}
+function renderCards() {
+  const order = { waiting: 0, busy: 1, idle: 2, ended: 3, archived: 4 };
+  const list = S.sessions.filter(s => (s.live || (S.now - (s.last || 0)) < 7200) && matches(s))
+    .sort((a, b) => order[sessionState(a).k] - order[sessionState(b).k] || (b.load?.cpu || 0) - (a.load?.cpu || 0) || (b.last || 0) - (a.last || 0));
+  $('#cards').innerHTML = list.map(s => {
+    const st = sessionState(s);
+    if (st.k !== 'busy' && st.k !== 'waiting' && !s.summary?.needs_action && (s.load?.cpu || 0) < 50)
+      return `<div class="panel card ${st.k}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
+        <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="t" style="flex:1;min-width:0" title="${esc(s.title)}">${esc(s.title)}</span><span class="when">${ago(s.last)}</span></div>
+        ${s.summary?.status_detail ? `<div class="meta">${esc(s.summary.status_detail)}</div>` : ''}
+        ${s.prs.length ? `<div class="row">${s.prs.map(prChip).join('')}</div>` : ''}</div>`;
+    const sum = s.summary?.status_detail || s.report || '';
+    const need = s.summary?.needs_action;
+    const procs = (s.load?.procs || []).filter(p => !p.self && (p.cpu > 1 || p.rss > 200e6)).slice(0, 3)
+      .map(p => `${esc(p.label)}${p.how !== 'tree' ? ' <span title="attributed by ' + p.how + '">⌁</span>' : ''} ${p.cpu.toFixed(0)}%`).join(' · ');
+    return `<div class="panel card ${st.k}" onclick="openDrawer('${s.sid}')">
+      <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="when" style="margin-left:auto">${ago(s.last)}</span></div>
+      <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
+      ${s.branch ? `<div class="meta">${esc(s.branch)}</div>` : ''}
+      ${sum ? `<div class="sum">${esc(sum)}</div>` : ''}
+      ${need ? `<div class="sum" style="color:var(--ink)"><b>⚑ needs you:</b> ${esc(need)}</div>` : ''}
+      ${s.load ? `<div class="load">${spark(s)}<span>${cores(s.load.cpu)} cores</span><span>${gb(s.load.rss)}</span></div>${procs ? `<div class="meta">${procs}</div>` : ''}` : ''}
+      ${s.prs.length ? `<div class="row">${s.prs.map(prChip).join('')}</div>` : ''}
+    </div>`;
+  }).join('') || '<div class="empty">nothing live</div>';
+  $('#orphans').innerHTML = S.orphans.length ? `<div class="panel" style="padding:8px 12px;margin-top:10px"><b>Heavy processes not attributed to any session</b>` +
+    S.orphans.map(o => `<div class="meta" title="${esc(o.args)}">${o.pid} ${esc(o.label)} — ${cores(o.cpu)} cores, ${gb(o.rss)} ${o.cwd ? '· ' + esc(o.cwd) : ''}</div>`).join('') + '</div>' : '';
+}
+
+// ---------------------------------------------------------------- timeline
+const _ctx = document.createElement('canvas').getContext('2d');
+function textW(t) { _ctx.font = '11px system-ui, -apple-system, sans-serif'; return _ctx.measureText(t).width; }
+const recentPR = p => p.state !== 'OPEN' || (S.now - (p.updated || 0)) < 30 * 86400 || p.sessions?.length;
+function renderTimeline() {
+  const svg = $('#timeline');
+  const W = svg.clientWidth || 1200, LW = 150, PW = W - LW - 12;
+  const t1 = S.now + range * 86400 * 0.01, t0 = S.now - range * 86400;
+  const x = t => LW + (t - t0) / (t1 - t0) * PW;
+  const ROW = 13, GAP = 5, PRROW = 14;
+  const B = S.bucket;
+  // pixel-bucket width: merge activity buckets that fall in the same ~3px column
+  const colSec = Math.max(B, (t1 - t0) / PW * 3);
+  const sessions = S.sessions.filter(s => matches(s) && (s.last || 0) >= t0);
+  const prs = S.prs.filter(p => !p.foreign && ((p.state === 'OPEN' && ((p.updated || 0) >= t0 || p.sessions?.length)) || (p.merged || p.closed || 0) >= t0) && (!query || matchesPR(p)));
+  const lanes = {};
+  for (const s of sessions) (lanes[s.lane] ??= { s: [], p: [] }).s.push(s);
+  for (const p of prs) if ((p.created || 0) <= t1) (lanes[p.lane] ??= { s: [], p: [] }).p.push(p);
+  const laneNames = Object.keys(lanes).sort((a, b) => {
+    const la = Math.max(...lanes[a].s.map(s => s.last || 0), 0), lb = Math.max(...lanes[b].s.map(s => s.last || 0), 0);
+    return lb - la;
+  });
+  // lane CPU history from persisted per-minute samples
+  const laneOf = Object.fromEntries(S.sessions.map(s => [s.sid, s.lane]));
+  const laneLoad = {};
+  for (const r of LOAD) for (const [sid, v] of Object.entries(r.s)) {
+    if (sid[0] === '@') continue;
+    const l = laneOf[sid]; if (!l) continue;
+    const m = (laneLoad[l] ??= {}); m[r.t] = (m[r.t] || 0) + v[0];
+  }
+  let y = 26, out = '';
+  // axis ticks
+  const step = range <= 1 ? 3 * 3600 : range <= 3 ? 12 * 3600 : 86400 * (range <= 7 ? 1 : 3);
+  const tz = new Date().getTimezoneOffset() * 60;
+  for (let t = Math.ceil((t0 - tz) / step) * step + tz; t < t1; t += step) {
+    const d = new Date(t * 1000);
+    const lab = step < 86400 ? (d.getHours() === 0 ? d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+    out += `<line x1="${x(t)}" x2="${x(t)}" y1="18" y2="100%" stroke="var(--grid)"/><text class="tick" x="${x(t) + 3}" y="13">${lab}</text>`;
+  }
+  const items = [];
+  for (const ln of laneNames) {
+    const L = lanes[ln];
+    // pack sessions into rows
+    const rows = [];
+    L.s.sort((a, b) => (a.first || 0) - (b.first || 0));
+    const place = new Map();
+    const lab = new Map();
+    for (const s of L.s) {
+      const st = sessionState(s);
+      const text = (st.k === 'waiting' ? '⏸ ' : st.k === 'busy' ? '▶ ' : '') + (s.title.length > 60 ? s.title.slice(0, 58) + '…' : s.title);
+      const a = x(Math.max(t0, s.first || s.last)), b = Math.max(a + 2, x(s.live ? S.now : s.last));
+      const tw = textW(text) + 8, right = b + tw < W - 4;
+      const lo = right ? a : a - tw, hi = right ? b + tw : b;
+      let r = rows.findIndex(end => end < lo - 6);
+      if (r < 0) { r = rows.length; rows.push(0); }
+      rows[r] = hi;
+      place.set(s.sid, r);
+      lab.set(s.sid, { text, right, a, b });
+    }
+    // PRs owned by a session in this lane are drawn on that session's row; the rest share one row of markers.
+    const inLane = new Set(L.s.map(s => s.sid));
+    const ownerOf = p => (p.sessions || []).find(sid => inLane.has(sid));
+    const loosePRs = L.p.filter(p => !ownerOf(p) && (((p.created || 0) >= t0) || ((p.merged || p.closed || 0) >= t0)));
+    const prRows = loosePRs.length ? [0] : [];
+    const hasPR = L.p.length > 0;
+    const laneH = 8 + prRows.length * PRROW + rows.length * (ROW + GAP) + 8;
+    out += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--axis)"/>`;
+    out += `<text class="lane-label" x="10" y="${y + 18}">${esc(ln)}</text><text x="10" y="${y + 32}" style="fill:var(--muted)">${L.s.length} sessions · ${L.p.filter(p => p.state === 'OPEN').length} open PRs</text>`;
+    // CPU band
+    const ll = laneLoad[ln];
+    if (ll) {
+      const ts = Object.keys(ll).map(Number).sort((a, b) => a - b).filter(t => t >= t0);
+      if (ts.length > 1) {
+        const mx = S.ncpu * 100, bandH = laneH - 4;
+        let d = `M${x(ts[0])},${y + laneH}`;
+        let prev = null;
+        for (const t of ts) {
+          if (prev !== null && t - prev > 180) d += ` L${x(prev)},${y + laneH} L${x(t)},${y + laneH}`;
+          d += ` L${x(t).toFixed(1)},${(y + laneH - Math.min(1, ll[t] / mx) * bandH).toFixed(1)}`;
+          prev = t;
+        }
+        d += ` L${x(prev)},${y + laneH} Z`;
+        out += `<path d="${d}" fill="var(--s1)" opacity=".13"/>`;
+      }
+    }
+    let yy = y + 8;
+    const drawPR = (p, cy) => {
+      const st = prState(p), end = p.merged || p.closed;
+      const a = (p.created || 0) >= t0 ? x(p.created) : null, b = end && end >= t0 ? x(end) : null;
+      if (a !== null && b !== null) out += `<line x1="${a}" x2="${b}" y1="${cy}" y2="${cy}" stroke="${st.c}" stroke-width="2" opacity=".5"/>`;
+      if (a !== null) { out += `<path d="M${a},${cy - 5} l5,5 l-5,5 l-5,-5z" fill="var(--surface)" stroke="${st.c}" stroke-width="1.5"/>`; items.push({ kind: 'pr', p, x0: a - 6, x1: a + 6, y0: cy - 6, y1: cy + 6 }); }
+      if (b !== null) { out += `<path d="M${b},${cy - 5} l5,5 l-5,5 l-5,-5z" fill="${st.c}" stroke="var(--surface)" stroke-width="1"/>`; items.push({ kind: 'pr', p, x0: b - 6, x1: b + 6, y0: cy - 6, y1: cy + 6 }); }
+    };
+    if (loosePRs.length) {
+      out += `<text x="${LW - 8}" y="${yy + 10}" text-anchor="end" style="fill:var(--muted);font-size:10px">PRs w/o session</text>`;
+      for (const p of loosePRs) drawPR(p, yy + 6);
+      yy += PRROW;
+    }
+    const sessPRs = [];
+    for (const s of L.s) {
+      const r = place.get(s.sid), ry = yy + r * (ROW + GAP);
+      const st = sessionState(s);
+      const a = x(Math.max(t0, s.first || s.last)), b = x(s.live ? S.now : s.last);
+      out += `<line x1="${a}" x2="${Math.max(a + 1, b)}" y1="${ry + ROW / 2}" y2="${ry + ROW / 2}" stroke="var(--axis)" stroke-width="1"/>`;
+      // activity columns
+      const cols = {};
+      for (const [k, v] of Object.entries(s.act)) {
+        const t = +k * B; if (t < t0) continue;
+        const c = Math.floor(t / colSec);
+        const o = (cols[c] ??= [0, 0]); o[0] += v[0]; o[1] += v[1];
+      }
+      const color = st.k === 'waiting' ? 'var(--warning)' : st.k === 'busy' ? 'var(--busy)' : s.archived ? 'var(--muted)' : 'var(--s1)';
+      for (const [c, v] of Object.entries(cols)) {
+        const cx = x(+c * colSec), w = Math.max(2, x((+c + 1) * colSec) - cx - 0.5);
+        const op = Math.min(1, 0.25 + Math.log2(1 + v[1]) / 6);
+        out += `<rect x="${cx.toFixed(1)}" y="${ry + 2}" width="${w.toFixed(1)}" height="${ROW - 4}" rx="1.5" fill="${color}" opacity="${op.toFixed(2)}"/>`;
+        if (v[0]) out += `<circle cx="${(cx + w / 2).toFixed(1)}" cy="${ry + ROW / 2}" r="${Math.min(4, 2 + v[0] / 2)}" fill="var(--ink)" stroke="var(--surface)" stroke-width="1"/>`;
+      }
+      const lb = lab.get(s.sid);
+      out += `<text x="${lb.right ? lb.b + 6 : lb.a - 6}" y="${ry + ROW - 3}" text-anchor="${lb.right ? 'start' : 'end'}" style="fill:${s.live ? 'var(--ink)' : 'var(--ink-2)'}">${esc(lb.text)}</text>`;
+      items.push({ kind: 's', s, x0: a - 3, x1: Math.max(b, a + 40) + 6, y0: ry, y1: ry + ROW });
+      for (const p of L.p) if (ownerOf(p) === s.sid) sessPRs.push([p, ry + ROW / 2]);
+    }
+    for (const [p, cy] of sessPRs) drawPR(p, cy);
+    y += Math.max(laneH, 44);
+  }
+  // spawn edges
+  const pos = Object.fromEntries(items.filter(i => i.kind === 's').map(i => [i.s.sid, i]));
+  for (const i of items) if (i.kind === 's' && i.s.spawned_from && pos[i.s.spawned_from]) {
+    const p = pos[i.s.spawned_from], cx = i.x0 + 3, cy = (i.y0 + i.y1) / 2, py = (p.y0 + p.y1) / 2;
+    out += `<path d="M${cx},${py} C${cx},${(py + cy) / 2} ${cx},${(py + cy) / 2} ${cx},${cy}" stroke="var(--s7)" fill="none" stroke-dasharray="2 2" opacity=".7"/>`;
+  }
+  out += `<line x1="${x(S.now)}" x2="${x(S.now)}" y1="18" y2="${y}" stroke="var(--critical)" stroke-width="1" opacity=".6"/>`;
+  svg.setAttribute('height', y + 6);
+  svg.innerHTML = out;
+  const findHit = (mx, my) => { const f = i => mx >= i.x0 && mx <= i.x1 && my >= i.y0 - 2 && my <= i.y1 + 2; return items.find(i => i.kind === 'pr' && f(i)) || items.find(f); };
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const hit = findHit(mx, my);
+    svg.style.cursor = hit ? 'pointer' : '';
+    if (!hit) return hideTip();
+    if (hit.kind === 'pr') {
+      const p = hit.p, st = prState(p);
+      tip(e, `<div class="tt">${esc(p.repo)}#${p.number} — ${esc(p.title)}</div><div class="tm">${st.icon} ${esc(st.label)} · opened ${ago(p.created)}${p.merged ? ' · merged ' + ago(p.merged) : ''}${p.draft ? ' · draft' : ''}</div><div class="tm">${esc(p.head)} → ${esc(p.base)}</div>`);
+    } else {
+      const s = hit.s, st = sessionState(s);
+      tip(e, `<div class="tt">${esc(s.title)}</div><div class="tm">${esc(st.label)} · ${fmtTime(s.first)} → ${s.live ? 'now' : fmtTime(s.last)} · ${s.prompts} prompts${s.subagents ? ' · ' + s.subagents + ' subagents' : ''}</div>${s.summary?.status_detail ? `<p>${esc(s.summary.status_detail)}</p>` : ''}${s.last_prompt ? `<p><b>last ask:</b> ${esc(s.last_prompt.slice(0, 220))}</p>` : ''}`);
+    }
+  };
+  svg.onmouseleave = hideTip;
+  svg.onclick = e => {
+    const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const hit = findHit(mx, my);
+    if (hit?.kind === 's') openDrawer(hit.s.sid);
+    else if (hit?.kind === 'pr') { if (hit.p.sessions?.length) openDrawer(hit.p.sessions[0]); else window.open(hit.p.url, '_blank'); }
+  };
+}
+function matchesPR(p) { const hay = [p.title, p.repo, p.head, p.key].join(' ').toLowerCase(); return query.split(/\s+/).every(w => hay.includes(w)); }
+
+// ---------------------------------------------------------------- loose ends
+const IDEA_RE = /\b(follow[- ]up|future work|next step|could also|worth (?:a|doing|trying|exploring)|separate PR|later|TODO|open question|want me to|should I|shall I)\b/i;
+function renderEnds() {
+  const S2 = S.sessions.filter(matches);
+  const allOpen = S.prs.filter(p => p.state === 'OPEN' && !p.foreign && (!query || matchesPR(p)));
+  const openPRs = allOpen.filter(recentPR);
+  const groups = [];
+  const sessItem = (s, extra) => `<div class="item" onclick="openDrawer('${s.sid}')"><div class="a"><span class="lane-chip">${esc(s.lane)}</span><span class="x">${esc(s.title)}</span><span class="when">${ago(s.last)}</span></div>${extra ? `<div class="b">${extra}</div>` : ''}</div>`;
+  const prItem = p => {
+    const st = prState(p), s = p.sessions?.[0] && S.sMap[p.sessions[0]];
+    return `<div class="item" onclick="${s ? `openDrawer('${s.sid}')` : `window.open('${esc(p.url)}','_blank')`}"><div class="a"><span style="color:${st.c}">${st.icon}</span><span class="lane-chip">${esc(p.lane)}#${p.number}</span><span class="x">${esc(p.title)}</span><span class="when">${ago(p.updated)}</span></div><div class="b">${esc(st.label)}${p.reviewers?.length ? ' · awaiting ' + esc(p.reviewers.join(', ')) : ''}${s ? ' · session: ' + esc(s.title) : ' · no session'}</div></div>`;
+  };
+  // 1. needs you
+  const needs = S2.filter(s => s.live?.status === 'waiting' || (s.summary?.needs_action && !s.archived)).sort((a, b) => (b.live?.status === 'waiting') - (a.live?.status === 'waiting') || b.last - a.last);
+  groups.push(['⚑ Needs you', needs.map(s => sessItem(s, esc(s.live?.status === 'waiting' ? 'waiting: ' + (s.live.waiting || '') : s.summary.needs_action)))]);
+  // 2. PRs ready to land
+  const ready = openPRs.filter(p => !p.draft && (p.review === 'APPROVED' || (p.ci === 'SUCCESS' && p.mergeable === 'MERGEABLE' && !p.reviewers?.length)));
+  groups.push(['✓ PRs that look landable', ready.map(prItem)]);
+  // 3. PRs in trouble
+  groups.push(['✕ PRs in trouble', openPRs.filter(p => ['FAILURE', 'ERROR'].includes(p.ci) || p.review === 'CHANGES_REQUESTED' || p.mergeable === 'CONFLICTING').sort((a, b) => b.updated - a.updated).map(prItem)]);
+  // 4. quiet sessions that own open PRs
+  const quiet = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 2 * 86400 && s.prs.some(k => S.prMap[k]?.state === 'OPEN'))
+    .sort((a, b) => b.last - a.last);
+  groups.push(['⏳ Gone quiet with open PRs', quiet.map(s => sessItem(s, s.prs.map(prChip).join(' ')))]);
+  // 5. ideas: proposals never started + unarchived threads whose last word was a suggestion/question
+  const props = S.proposals.filter(p => !String(p.fate).startsWith('started')).map(p => {
+    const s = S.sMap[p.sid];
+    return `<div class="item" onclick="openDrawer('${p.sid}')"><div class="a"><span>💡</span><span class="lane-chip">${esc(p.lane)}</span><span class="x">${esc(p.title)}</span><span class="when">${ago(p.t)}</span></div><div class="b">${esc(p.fate)} · from “${esc(s?.title || '')}” — ${esc(p.prompt.slice(0, 200))}</div></div>`;
+  });
+  const dangling = S2.filter(s => !s.live && !s.archived && s.last_text && IDEA_RE.test(s.last_text.slice(-600)) && S.now - (s.last || 0) > 3600)
+    .sort((a, b) => b.last - a.last).slice(0, 25)
+    .map(s => sessItem(s, '“…' + esc(s.last_text.slice(-260)) + '”'));
+  groups.push(['💡 Ideas & offers left hanging', props.concat(dangling)]);
+  // 6. open PRs with no session at all (non-draft first)
+  const lonely = openPRs.filter(p => !p.sessions?.length).sort((a, b) => (a.draft - b.draft) || b.updated - a.updated);
+  const ancient = allOpen.length - openPRs.length;
+  groups.push(['○ Open PRs with no session', lonely.map(prItem).concat(ancient ? [`<div class="empty">${ancient} more open PRs untouched for 30+ days</div>`] : [])]);
+  // 7. unarchived but dead sessions, oldest first: archive or revive
+  const stale = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 5 * 86400).sort((a, b) => a.last - b.last);
+  groups.push(['🗄 Unarchived, idle > 5 days', stale.map(s => sessItem(s, esc(s.summary?.status_detail || '')))]);
+  $('#ends').innerHTML = groups.map(([h, its]) => `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${its.slice(0, 12).join('') || '<div class="empty">none</div>'}${its.length > 12 ? `<div class="empty">+${its.length - 12} more</div>` : ''}</div>`).join('');
+}
+
+// ---------------------------------------------------------------- drawer
+let openSid = null;
+function openDrawer(sid, keepScroll) {
+  const s = S.sMap[sid]; if (!s) return;
+  openSid = sid;
+  const st = sessionState(s), d = $('#drawer');
+  const kids = S.sessions.filter(x => x.spawned_from === sid);
+  const parent = s.spawned_from && S.sMap[s.spawned_from];
+  const scroll = d.scrollTop;
+  d.innerHTML = `<button class="close" onclick="closeDrawer()">✕</button>
+    <h2>${esc(s.title)}</h2>
+    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}</div>
+    <div class="when" style="margin-top:6px">${fmtTime(s.first)} → ${s.live ? 'now' : fmtTime(s.last)} · ${s.prompts} prompts · ${(s.out_tokens / 1000).toFixed(0)}k output tokens${s.subagents ? ' · ' + s.subagents + ' subagents' : ''}</div>
+    ${s.summary ? `<div class="k">Status</div><div>${esc(s.summary.status_category || '')}: ${esc(s.summary.status_detail || '')}${s.summary.needs_action ? `<br><b>⚑ ${esc(s.summary.needs_action)}</b>` : ''}</div>` : ''}
+    ${s.prs.length ? `<div class="k">Pull requests</div><div style="display:flex;gap:6px;flex-wrap:wrap">${s.prs.map(prChip).join('')}</div>` : ''}
+    ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
+    ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
+    ${s.load ? `<div class="k">Processes (${cores(s.load.cpu)} cores, ${gb(s.load.rss)})</div><table>${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table>` : ''}
+    ${s.last_prompt ? `<div class="k">Your last ask · ${ago(s.last_prompt_t)}</div><pre>${esc(s.last_prompt)}</pre>` : ''}
+    ${s.last_text ? `<div class="k">Agent's last words</div><pre>${esc(s.last_text)}</pre>` : ''}
+    ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
+    ${s.first_prompt ? `<div class="k">How it started</div><pre>${esc(s.first_prompt)}</pre>` : ''}
+    <div class="k">Resume</div><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre>
+    ${Object.keys(s.pr_mentions).length ? `<div class="k">PRs mentioned in transcript</div><div class="when">${Object.entries(s.pr_mentions).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${esc(k)} ×${n}`).join(' · ')}</div>` : ''}`;
+  d.classList.add('open');
+  if (keepScroll) d.scrollTop = scroll; else d.scrollTop = 0;
+}
+function closeDrawer() { openSid = null; $('#drawer').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+// ---------------------------------------------------------------- tooltip
+function tip(e, html) {
+  const t = $('#tip'); t.innerHTML = html; t.style.display = 'block';
+  const w = t.offsetWidth, h = t.offsetHeight;
+  t.style.left = Math.min(e.clientX + 14, innerWidth - w - 8) + 'px';
+  t.style.top = (e.clientY + 14 + h > innerHeight ? e.clientY - h - 10 : e.clientY + 14) + 'px';
+}
+function hideTip() { $('#tip').style.display = 'none'; }
+
+// ---------------------------------------------------------------- controls
+$('#ranges').innerHTML = RANGES.map(([l, d]) => `<button data-d="${d}" class="${d === range ? 'on' : ''}">${l}</button>`).join('');
+$('#ranges').onclick = e => {
+  const d = +e.target.dataset.d; if (!d) return;
+  range = d; localStore('range', d);
+  document.querySelectorAll('#ranges button').forEach(b => b.classList.toggle('on', +b.dataset.d === d));
+  refreshLoad();
+};
+$('#q').oninput = e => { query = e.target.value.toLowerCase().trim(); render(); };
+$('#show-archived').onchange = e => { showArchived = e.target.checked; render(); };
+addEventListener('resize', () => S && render());
+refresh().then(refreshLoad);
+setInterval(refresh, 5000);
+setInterval(refreshLoad, 60000);
+</script>
+</body>
+</html>

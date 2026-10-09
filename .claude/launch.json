@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "agentscope", "runtimeExecutable": "python3", "runtimeArgs": ["-u", "agentscope.py"], "port": 8377 }
+  ]
+}
