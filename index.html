@@ -107,7 +107,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #drawer .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
 #drawer pre a, .sum a, .meta a, .item .b a { color: var(--s1); }
 #drawer pre { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow: auto; }
-#drawer { overflow-x: hidden; }
+#drawer { overflow-x: hidden; overscroll-behavior: contain; }  /* wheel at the panel's end must not scroll the page behind it */
 /* process tables only; markdown tables in the thread keep their own layout */
 #drawer table.pt { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; font-variant-numeric: tabular-nums; }
 #drawer table.pt td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
@@ -143,7 +143,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .md th { background: var(--surface-2); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .md-plain { white-space: pre-wrap; }
-.sres { display: none; position: absolute; top: calc(100% + 6px); right: 0; width: min(640px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30;
+.sres { overscroll-behavior: contain; display: none; position: absolute; top: calc(100% + 6px); right: 0; width: min(640px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30;
   background: var(--surface); border: 1px solid var(--axis); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.3); padding: 6px; }
 .sres.open { display: block; }
 .sres .g { padding: 8px 10px; border-radius: 8px; }
