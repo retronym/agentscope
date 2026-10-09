@@ -87,7 +87,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #timeline text { font-size: 11px; fill: var(--ink-2); }
 #timeline .lane-label { font-weight: 600; fill: var(--ink); font-size: 12px; }
 #timeline .tick { fill: var(--muted); font-size: 10.5px; }
-.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 7px 9px; max-width: 420px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); display: none; }
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 7px 9px; min-width: 240px; max-width: 420px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); display: none; }
 .tip .tt { font-weight: 600; margin-bottom: 2px; }
 .tip .tm { color: var(--muted); }
 .tip p { margin: 4px 0 0; color: var(--ink-2); white-space: pre-wrap; }
@@ -173,7 +173,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
     <div id="orphans"></div>
   </section>
   <section>
-    <h2>Timeline <span class="sub">one lane per repo · bar = agent activity, ● = your prompt, ◇ PR opened, ◆ merged/closed (color = PR state), dashed = spawned-from · shaded band = CPU</span></h2>
+    <h2>Timeline <span class="sub">one lane per repo · bar = agent activity, ● = your prompt, ◇ PR opened, ◆ merged/closed (color = PR state), dashed = spawned-from · lane background = attributed CPU (darker = more cores)</span></h2>
     <div class="panel" id="timeline-wrap"><svg id="timeline" width="100%"></svg></div>
   </section>
   <section>
@@ -319,7 +319,12 @@ function renderMachine() {
     mh.onmousemove = e => {
       const r = mh.getBoundingClientRect(), t = t0 + (e.clientX - r.left) / r.width * (t1 - t0);
       const row = h.reduce((a, b) => Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a);
-      tip(e, `<div class="tt">${new Date(row[0] * 1000).toLocaleTimeString()}</div>` + MACHINE_KEYS.map(([k, c, l]) => `<div><span style="color:var(${c})">■</span> ${l}: ${cores(row[1][k] || 0)} cores</div>`).join(''));
+      const top = (row[2] || []).map(([sid, cpu]) => {
+        const s = S.sMap[sid];
+        return `<div style="display:flex;gap:8px;align-items:baseline"><span class="lane-chip">${esc(s?.lane || '?')}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s?.title || sid.slice(0, 8))}</span><b style="font-variant-numeric:tabular-nums">${cores(cpu)}</b></div>`;
+      }).join('');
+      tip(e, `<div class="tt">${new Date(row[0] * 1000).toLocaleTimeString()}</div>` + MACHINE_KEYS.map(([k, c, l]) => `<div><span style="color:var(${c})">■</span> ${l}: ${cores(row[1][k] || 0)} cores</div>`).join('') +
+        (top ? `<div class="tm" style="margin:6px 0 2px">top agent sessions (cores)</div>${top}` : ''));
     };
     mh.onmouseleave = hideTip;
   }
@@ -332,14 +337,38 @@ function spark(s) {
   const pts = s.spark.map((p, i) => `${(i / (s.spark.length - 1) * W).toFixed(1)},${(H - p[1] / mx * H).toFixed(1)}`).join(' ');
   return `<svg width="${W}" height="${H}"><polyline points="${pts}" fill="none" stroke="var(--s1)" stroke-width="1.5"/></svg>`;
 }
+// Card order is sticky: state first, then a CPU tier with hysteresis, then wherever the card already was.
+// Raw CPU jitters every sample; a card only moves when its state or tier changes.
+const TIERS = [50, 200, 400];  // % CPU (100 = one core) boundaries: <0.5, 0.5-2, 2-4, 4+ cores
+const tierOf = {}, prevPos = {};
+function cpuTier(s) {
+  const c = s.load?.cpu || 0;
+  let t = tierOf[s.sid] ?? TIERS.filter(b => c >= b).length;
+  while (t < TIERS.length && c >= TIERS[t] * 1.3) t++;  // up only when clearly past the boundary
+  while (t > 0 && c < TIERS[t - 1] * 0.6) t--;          // down only when clearly below it
+  return (tierOf[s.sid] = t);
+}
+function flip(container, render) {
+  const before = new Map([...container.querySelectorAll('[data-sid]')].map(e => [e.dataset.sid, e.getBoundingClientRect()]));
+  render();
+  for (const el of container.querySelectorAll('[data-sid]')) {
+    const b = before.get(el.dataset.sid), a = el.getBoundingClientRect();
+    if (!b) { el.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' }); continue; }
+    const dx = b.left - a.left, dy = b.top - a.top;
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1)
+      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  }
+}
 function renderCards() {
   const order = { waiting: 0, busy: 1, idle: 2, ended: 3, archived: 4 };
-  const list = S.sessions.filter(s => (s.live || (S.now - (s.last || 0)) < 7200) && matches(s))
-    .sort((a, b) => order[sessionState(a).k] - order[sessionState(b).k] || (b.load?.cpu || 0) - (a.load?.cpu || 0) || (b.last || 0) - (a.last || 0));
-  $('#cards').innerHTML = list.map(s => {
+  const list = S.sessions.filter(s => (s.live || (S.now - (s.last || 0)) < 7200) && matches(s));
+  const key = new Map(list.map(s => [s.sid, [order[sessionState(s).k], -cpuTier(s), prevPos[s.sid] ?? 1e6, -(s.last || 0)]]));
+  list.sort((a, b) => { const x = key.get(a.sid), y = key.get(b.sid); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; });
+  list.forEach((s, i) => prevPos[s.sid] = i);
+  const html = list.map(s => {
     const st = sessionState(s);
     if (st.k !== 'busy' && st.k !== 'waiting' && !s.summary?.needs_action && (s.load?.cpu || 0) < 50)
-      return `<div class="panel card ${st.k}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
+      return `<div class="panel card ${st.k}" data-sid="${s.sid}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
         <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="t" style="flex:1;min-width:0" title="${esc(s.title)}">${esc(s.title)}</span><span class="when">${ago(s.last)}</span>${claudeLink(s)}</div>
         ${s.summary?.status_detail ? `<div class="meta">${lk(s.summary.status_detail, s)}</div>` : ''}
         ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}</div>`;
@@ -347,7 +376,7 @@ function renderCards() {
     const need = s.summary?.needs_action;
     const procs = (s.load?.procs || []).filter(p => !p.self && (p.cpu > 1 || p.rss > 200e6)).slice(0, 3)
       .map(p => `${esc(p.label)}${p.how !== 'tree' ? ' <span title="attributed by ' + p.how + '">⌁</span>' : ''} ${p.cpu.toFixed(0)}%`).join(' · ');
-    return `<div class="panel card ${st.k}" onclick="openDrawer('${s.sid}')">
+    return `<div class="panel card ${st.k}" data-sid="${s.sid}" onclick="openDrawer('${s.sid}')">
       <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
       <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
       ${s.branch ? `<div class="meta">${esc(s.branch)}</div>` : ''}
@@ -357,6 +386,8 @@ function renderCards() {
       ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}
     </div>`;
   }).join('') || '<div class="empty">nothing live</div>';
+  const cards = $('#cards');
+  if (cards.dataset.html !== html) { flip(cards, () => { cards.innerHTML = html; }); cards.dataset.html = html; }
   $('#orphans').innerHTML = S.orphans.length ? `<div class="panel" style="padding:8px 12px;margin-top:10px"><b>Heavy processes not attributed to any session</b>` +
     S.orphans.map(o => `<div class="meta" title="${esc(o.args)}">${o.pid} ${esc(o.label)} — ${cores(o.cpu)} cores, ${gb(o.rss)} ${o.cwd ? '· ' + esc(o.cwd) : ''}</div>`).join('') + '</div>' : '';
 }
@@ -429,22 +460,22 @@ function renderTimeline() {
     const laneH = 8 + prRows.length * PRROW + rows.length * (ROW + GAP) + 8;
     out += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--axis)"/>`;
     out += `<text class="lane-label" x="10" y="${y + 18}">${esc(ln)}</text><text x="10" y="${y + 32}" style="fill:var(--muted)">${L.s.length} sessions · ${L.p.filter(p => p.state === 'OPEN').length} open PRs</text>`;
-    // CPU band
+    // CPU heat: lane background shaded by the lane's attributed CPU, binned to a few pixels
     const ll = laneLoad[ln];
     if (ll) {
-      const ts = Object.keys(ll).map(Number).sort((a, b) => a - b).filter(t => t >= t0);
-      if (ts.length > 1) {
-        const mx = S.ncpu * 100, bandH = laneH - 4;
-        let d = `M${x(ts[0])},${y + laneH}`;
-        let prev = null;
-        for (const t of ts) {
-          if (prev !== null && t - prev > 180) d += ` L${x(prev)},${y + laneH} L${x(t)},${y + laneH}`;
-          d += ` L${x(t).toFixed(1)},${(y + laneH - Math.min(1, ll[t] / mx) * bandH).toFixed(1)}`;
-          prev = t;
-        }
-        d += ` L${x(prev)},${y + laneH} Z`;
-        out += `<path d="${d}" fill="var(--s1)" opacity=".13"/>`;
+      const binSec = Math.max(60, (t1 - t0) / PW * 4), bins = {};
+      for (const [t, v] of Object.entries(ll)) {
+        if (+t < t0) continue;
+        const b = Math.floor(+t / binSec), o = (bins[b] ??= [0, 0]);
+        o[0] += v; o[1]++;
       }
+      for (const [b, [sum, n]] of Object.entries(bins)) {
+        const cpu = sum / n, frac = Math.min(1, cpu / (S.ncpu * 100));
+        if (cpu < 10) continue;
+        const bx = x(+b * binSec), bw = Math.max(1, x((+b + 1) * binSec) - bx);
+        out += `<rect x="${bx.toFixed(1)}" y="${y + 1}" width="${(bw + 0.4).toFixed(1)}" height="${Math.max(laneH, 44) - 1}" fill="var(--accent)" opacity="${(0.06 + Math.sqrt(frac) * 0.5).toFixed(3)}"/>`;
+      }
+      items.push({ kind: 'heat', lane: ln, bins, binSec, x0: LW, x1: W, y0: y + 2, y1: y + Math.max(laneH, 44) - 2 });
     }
     let yy = y + 8;
     const drawPR = (p, cy) => {
@@ -496,12 +527,17 @@ function renderTimeline() {
   out += `<line x1="${x(S.now)}" x2="${x(S.now)}" y1="18" y2="${y}" stroke="var(--critical)" stroke-width="1" opacity=".6"/>`;
   svg.setAttribute('height', y + 6);
   svg.innerHTML = out;
-  const findHit = (mx, my) => { const f = i => mx >= i.x0 && mx <= i.x1 && my >= i.y0 - 2 && my <= i.y1 + 2; return items.find(i => i.kind === 'pr' && f(i)) || items.find(f); };
+  const findHit = (mx, my) => { const f = i => mx >= i.x0 && mx <= i.x1 && my >= i.y0 - 2 && my <= i.y1 + 2; return items.find(i => i.kind === 'pr' && f(i)) || items.find(i => i.kind === 's' && f(i)) || items.find(f); };
   svg.onmousemove = e => {
     const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     const hit = findHit(mx, my);
-    svg.style.cursor = hit ? 'pointer' : '';
+    svg.style.cursor = hit && hit.kind !== 'heat' ? 'pointer' : '';
     if (!hit) return hideTip();
+    if (hit.kind === 'heat') {
+      const t = t0 + (mx - LW) / PW * (t1 - t0), bin = hit.bins[Math.floor(t / hit.binSec)];
+      if (!bin) return hideTip();
+      return tip(e, `<div class="tt">${esc(hit.lane)}</div><div class="tm">${fmtTime(Math.floor(t / hit.binSec) * hit.binSec)} · ${cores(bin[0] / bin[1])} cores attributed</div>`);
+    }
     if (hit.kind === 'pr') {
       const p = hit.p, st = prState(p);
       tip(e, `<div class="tt">${esc(p.repo)}#${p.number} — ${esc(p.title)}</div><div class="tm">${st.icon} ${esc(st.label)} · opened ${ago(p.created)}${p.merged ? ' · merged ' + ago(p.merged) : ''}${p.draft ? ' · draft' : ''}</div><div class="tm">${esc(p.head)} → ${esc(p.base)}</div>`);

@@ -736,7 +736,9 @@ def build_state(sampler):
     return dict(now=time.time(), ncpu=NCPU, mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
-                machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()}] for h in hist[-720:]])
+                machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
+                               sorted(([sid, v[0]] for sid, v in h[1].items() if v[0] >= 5), key=lambda x: -x[1])[:8]]
+                              for h in hist[-720:]])
 
 
 _mem = []
@@ -753,6 +755,11 @@ def _memsize():
 
 def serve(port):
     sampler = Sampler()
+    # seed the in-memory history from the persisted per-minute samples so a restart doesn't blank the charts
+    for r in load_history(time.time() - sampler.hist.maxlen * sampler.period):
+        sess = {k: v for k, v in r["s"].items() if not k.startswith("@")}
+        buckets = {k[1:]: v for k, v in r["s"].items() if k.startswith("@")}
+        sampler.hist.append((r["t"], sess, buckets))
     threading.Thread(target=sampler.loop, args=(meta_cached,), daemon=True).start()
     threading.Thread(target=gh_loop, daemon=True).start()
 
