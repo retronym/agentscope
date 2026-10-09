@@ -1060,7 +1060,7 @@ if (DEMO) {
   // synthetic PRs and issues link nowhere
   document.addEventListener('click', e => { if (e.target.closest('a[href="#"]')) e.preventDefault(); }, true);  // only the synthetic '#' links; the project links work  // onclick handlers still run
 }
-// ---------------------------------------------------------------- URL hash state: #session=<sid>[&at=<idx>] · #q=<search> · #scroll=<id> · #only=<section id>
+// ---------------------------------------------------------------- URL hash state: #session=<sid>[&at=<idx>] · #q=<search> · #scroll=<id> · #only=<section id> · #jvm=<id>
 // Shareable links into a session or a search; the back button closes a panel opened from a link.
 function hashState() { return Object.fromEntries(new URLSearchParams(location.hash.slice(1))); }
 function applyHash() {
@@ -1069,6 +1069,7 @@ function applyHash() {
   if (h.session && S?.sMap[h.session] && openSid !== h.session) h.at !== undefined ? openDrawerAt(h.session, +h.at) : openDrawer(h.session);
   if (!h.session && openSid) closeDrawer();
   if (h.scroll) document.getElementById(h.scroll)?.scrollIntoView();
+  applyJvmHash(h);
   for (const sec of document.querySelectorAll('main > section')) sec.hidden = !!h.only && sec.id !== h.only;  // #only=sec-timeline: one section
 }
 function setHash(kv) {
