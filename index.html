@@ -105,7 +105,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(780px, 100vw); border-left: 1px solid var(--axis); z-index: 10; transform: translateX(100%); transition: transform .15s; overflow: hidden; background: var(--page); }
 #dbody { height: 100%; overflow-y: auto; overflow-x: hidden; padding: 20px 28px 60px; overscroll-behavior: contain; }
 #drawer.open { transform: none; box-shadow: -10px 0 30px rgba(0,0,0,.3); }
-#drawer h2 { margin: 0 40px 8px 0; font: 500 22px/1.25 var(--font-prose); letter-spacing: -.01em; }
+#drawer h2 { margin: 0 150px 8px 0; font: 500 22px/1.25 var(--font-prose); letter-spacing: -.01em; }
 #drawer .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
 #drawer pre a, .sum a, .meta a, .item .b a { color: var(--s1); }
 #drawer pre { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow: auto; }
@@ -119,6 +119,10 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 /* lives in the non-scrolling frame, so it stays put while #dbody scrolls */
 #drawer .close { position: absolute; top: 12px; right: 16px; z-index: 3; width: 32px; height: 32px; padding: 0; border-radius: 50%;
   border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 15px; opacity: .6; transition: opacity .15s, color .15s; }
+#drawer .dopen { position: absolute; top: 12px; right: 56px; z-index: 3; height: 32px; display: inline-flex; align-items: center; gap: 4px; padding: 0 12px;
+  border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 12.5px; text-decoration: none; opacity: .6; transition: opacity .15s, color .15s; }
+#drawer:hover .dopen { opacity: 1; }
+#drawer .dopen:hover { color: var(--ink); border-color: var(--accent); }
 #drawer:hover .close { opacity: 1; }
 #drawer .close:hover { color: var(--ink); border-color: var(--axis); }
 #drawer.dragging { transition: none; }
@@ -693,7 +697,7 @@ function drawerMeta(s) {
   const kids = S.sessions.filter(x => x.spawned_from === s.sid);
   const parent = s.spawned_from && S.sMap[s.spawned_from];
   return `<h2>${esc(s.title)}</h2>
-    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}${claudeLink(s)}</div>
+    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}</div>
     <div class="when" style="margin-top:6px">${fmtTime(s.first)} → ${s.live ? 'now' : fmtTime(s.last)} · ${s.prompts} prompts · ${(s.out_tokens / 1000).toFixed(0)}k output tokens${s.subagents ? ' · ' + s.subagents + ' subagents' : ''}</div>
     ${s.summary ? `<div class="k">Status</div><div>${esc(s.summary.status_category || '')}: ${lk(s.summary.status_detail || '', s)}${s.summary.needs_action ? `<br><b>⚑ ${lk(s.summary.needs_action, s)}</b>` : ''}</div>` : ''}
     ${s.prs.length ? `<div class="k">Pull requests</div><div style="display:flex;gap:6px;flex-wrap:wrap">${s.prs.map(prChip).join('')}</div>` : ''}
@@ -830,11 +834,14 @@ function openDrawer(sid, keepScroll) {
   if (d.dataset.sid !== sid) pushCrumb(sid);
   if (fresh) {
     d.dataset.sid = sid;
-    d.innerHTML = `<button class="close" title="close (Esc, or swipe right)" onclick="closeDrawer()">✕</button><div id="dbody"><div id="dmeta"></div><div id="dthread"><div class="empty">loading thread…</div></div></div>`;
+    d.innerHTML = `<a class="dopen" id="dopen" title="Open this session in the Claude app">↗ Claude</a><button class="close" title="close (Esc, or swipe right)" onclick="closeDrawer()">✕</button><div id="dbody"><div id="dmeta"></div><div id="dthread"><div class="empty">loading thread…</div></div></div>`;
     d.dataset.limit = 60;
   }
   const scroll = $('#dbody').scrollTop;
   patch($('#dmeta'), drawerMeta(s));
+  const openBtn = $('#dopen'), canOpen = s.local && !s.archived;
+  openBtn.style.display = canOpen ? '' : 'none';
+  if (canOpen) openBtn.href = `claude://code/continue?session=${encodeURIComponent(s.local)}`;
   loadThread(s, +d.dataset.limit);
   d.classList.add('open');
   $('#dbody').scrollTop = fresh ? 0 : scroll;
