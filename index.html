@@ -61,6 +61,7 @@ button.on { background: var(--ink); color: var(--page); }
 .chip.on .n { color: inherit; opacity: .7; }
 label.chk { color: var(--ink-2); display: flex; gap: 4px; align-items: center; cursor: pointer; }
 main { padding: 14px 20px 60px; display: flex; flex-direction: column; gap: 22px; }
+section { scroll-margin-top: calc(var(--header-h, 150px) + 8px); }
 section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
 section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
@@ -156,7 +157,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .md th { background: var(--surface-2); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .md-plain { white-space: pre-wrap; }
-.sres { overscroll-behavior: contain; display: none; position: absolute; top: calc(100% + 6px); right: 0; width: min(640px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30;
+.sres { overscroll-behavior: contain; display: none; position: absolute; top: calc(100% + 6px); left: 0; width: min(640px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30;
   background: var(--surface); border: 1px solid var(--axis); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.3); padding: 6px; }
 .sres.open { display: block; }
 .sres .g { padding: 8px 10px; border-radius: 8px; }
@@ -180,6 +181,13 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 .crumb i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .crumb.cur { border-color: var(--accent); color: var(--ink); }
 .crumb:hover { border-color: var(--axis); }
+.demo-banner { display: flex; gap: 14px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 9px 20px; font-size: 13px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--page)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); color: var(--ink); }
+.demo-banner[hidden] { display: none; }
+.demo-banner .gh { flex-shrink: 0; padding: 5px 14px; border-radius: 99px; background: var(--accent); color: #fff; font-weight: 600; text-decoration: none; }
+.demo-banner .gh:hover { filter: brightness(1.08); }
+.foot { padding: 0 20px 28px; color: var(--muted); font-size: 12px; text-align: center; }
+.foot a { color: var(--ink-2); }
 .btn-link { background: none; border: 1px solid var(--border); color: var(--ink-2); font-size: 12px; }
 .copy { cursor: pointer; }
 .empty { color: var(--muted); padding: 6px 0; }
@@ -190,8 +198,12 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head>
 <body>
+<div id="demo-banner" class="demo-banner" hidden>
+  <span><b>Demo with synthetic data.</b> The structure and numbers come from a real snapshot of one developer's agent sessions; every title, message, name, path and date is generated.</span>
+  <a class="gh" href="https://github.com/retronym/agentscope" target="_blank" rel="noopener">★ agentscope on GitHub</a>
+</div>
 <header>
-  <h1><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E %3Crect width='64' height='64' rx='14' fill='%23262624'/%3E %3Crect x='10' y='16' width='30' height='7' rx='3.5' fill='%23d97757'/%3E %3Crect x='18' y='28.5' width='28' height='7' rx='3.5' fill='%23d97757' opacity='.72'/%3E %3Crect x='10' y='41' width='20' height='7' rx='3.5' fill='%23d97757' opacity='.45'/%3E %3Cline x1='51' y1='11' x2='51' y2='53' stroke='%23faf9f5' stroke-width='3' stroke-linecap='round'/%3E %3Ccircle cx='51' cy='32' r='4.5' fill='%23faf9f5'/%3E %3C/svg%3E" alt="">agentscope</h1><span id="demo-badge" class="badge" style="display:none" title="Structure and numbers come from a real snapshot; all text, names and paths are synthetic.">demo · synthetic data</span>
+  <h1 id="h1"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E %3Crect width='64' height='64' rx='14' fill='%23262624'/%3E %3Crect x='10' y='16' width='30' height='7' rx='3.5' fill='%23d97757'/%3E %3Crect x='18' y='28.5' width='28' height='7' rx='3.5' fill='%23d97757' opacity='.72'/%3E %3Crect x='10' y='41' width='20' height='7' rx='3.5' fill='%23d97757' opacity='.45'/%3E %3Cline x1='51' y1='11' x2='51' y2='53' stroke='%23faf9f5' stroke-width='3' stroke-linecap='round'/%3E %3Ccircle cx='51' cy='32' r='4.5' fill='%23faf9f5'/%3E %3C/svg%3E" alt="">agentscope</h1>
   <div class="tile"><span class="v" id="t-live">–</span><span class="l">live sessions</span></div>
   <div class="tile"><span class="v" id="t-wait">–</span><span class="l">waiting on you</span></div>
   <div class="tile"><span class="v" id="t-cpu">–</span><span class="l">agent CPU (cores)</span></div>
@@ -209,22 +221,23 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
   <nav id="crumbs" class="crumbs"></nav>
 </header>
 <main>
-  <section>
+  <section id="sec-now">
     <h2>Now <span class="sub">live sessions and anything active in the last 2h · CPU from cputime deltas, attributed by process ancestry (else by cwd)</span></h2>
     <div class="panel" id="machine"></div>
     <div style="height:10px"></div>
     <div class="cards" id="cards"></div>
     <div id="orphans"></div>
   </section>
-  <section>
+  <section id="sec-timeline">
     <h2>Timeline <span class="sub">one lane per repo · bar = agent activity, ● = your prompt, ◇ PR opened, ◆ merged/closed (color = PR state), dashed = spawned-from · lane background = attributed CPU (darker = more cores)</span></h2>
     <div class="panel" id="timeline-wrap"><svg id="timeline" width="100%"></svg></div>
   </section>
-  <section>
+  <section id="sec-ends">
     <h2>Loose ends <span class="sub">things that fall out of your head</span></h2>
     <div class="ends" id="ends"></div>
   </section>
 </main>
+<footer class="foot"><a href="https://github.com/retronym/agentscope" target="_blank" rel="noopener">agentscope</a> · a local dashboard for Claude Code agent sessions · Apache 2.0</footer>
 <div id="drawer"></div>
 <div class="tip" id="tip"></div>
 <script>
@@ -391,7 +404,9 @@ function render() {
   $('#t-prs').textContent = `${open.length} · ${open.filter(p => p.ci === 'FAILURE' || p.ci === 'ERROR').length}`;
   $('#updated').innerHTML = (S.gh_err ? `<span class="err" title="${esc(S.gh_err)}">GitHub error</span> · ` : '') +
     (S.gh_t ? 'GitHub ' + ago(S.gh_t) : 'GitHub loading…') + (S.index_ready ? '' : ' · indexing transcripts…');
-  renderChips(); renderCrumbs(); renderMachine(); renderCards(); renderTimeline(); renderEnds();
+  renderChips(); renderCrumbs();
+  document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
+  renderMachine(); renderCards(); renderTimeline(); renderEnds();
   if (openSid && S.sMap[openSid]) openDrawer(openSid, true);
 }
 
@@ -476,7 +491,8 @@ function renderCards() {
     const st = sessionState(s);
     if (st.k !== 'busy' && st.k !== 'waiting' && !s.summary?.needs_action && (s.load?.cpu || 0) < 50)
       return `<div class="panel card ${st.k}" data-sid="${s.sid}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
-        <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="t" style="flex:1;min-width:0" title="${esc(s.title)}">${esc(s.title)}</span><span class="when">${ago(s.last)}</span>${claudeLink(s)}</div>
+        <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
+        <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
         ${s.summary?.status_detail ? `<div class="meta">${lk(s.summary.status_detail, s)}</div>` : ''}
         ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}</div>`;
     const sum = s.summary?.status_detail || s.report || '';
@@ -551,7 +567,7 @@ function renderTimeline() {
       const st = sessionState(s);
       const text = (st.k === 'waiting' ? '⏸ ' : st.k === 'busy' ? '▶ ' : '') + (s.title.length > 60 ? s.title.slice(0, 58) + '…' : s.title);
       const a = x(Math.max(t0, s.first || s.last)), b = Math.max(a + 2, x(s.live ? S.now : s.last));
-      const tw = textW(text) + 8, right = b + tw < W - 4;
+      const tw = textW(text) + 8, right = b + tw < W - 4 || a - tw < LW + 4;  // left only if it clears the lane label
       const lo = right ? a : a - tw, hi = right ? b + tw : b;
       let r = rows.findIndex(end => end < lo - 6);
       if (r < 0) { r = rows.length; rows.push(0); }
@@ -689,10 +705,10 @@ function linkify(text, s) {
 // #N in a session: a known PR with that number in the session's lane (fork or upstream), else the session's own repo
 function bareRef(n, s) {
   const own = s.prs.map(k => S.prMap[k]).find(p => p?.number === n);
-  if (own) return own.url;
+  if (own) return DEMO ? '#' : own.url;
   const inLane = S.prs.filter(p => p.lane === s.lane && p.number === n);
   if (inLane.length === 1) return inLane[0].url;
-  return s.repo ? `https://github.com/${s.repo}/issues/${n}` : null;
+  return DEMO ? '#' : s.repo ? `https://github.com/${s.repo}/issues/${n}` : null;
 }
 const lk = (t, s) => linkify(esc(t), s);
 // Deep link into the desktop app; it resolves local_* ids among unarchived sessions.
@@ -885,7 +901,7 @@ function openDrawer(sid, keepScroll) {
   const d = $('#drawer');
   const fresh = d.dataset.sid !== sid || !keepScroll;
   openSid = sid;
-  if (d.dataset.sid !== sid) pushCrumb(sid);
+  if (d.dataset.sid !== sid) { pushCrumb(sid); setHash({ session: sid, at: null }); }
   if (fresh) {
     d.dataset.sid = sid;
     d.innerHTML = `<a class="dopen" id="dopen" title="Open this session in the Claude app">↗ Claude</a><button class="close" title="close (Esc, or swipe right)" onclick="closeDrawer()">✕</button><div id="dbody"><div id="dmeta"></div><div id="dthread"><div class="empty">loading thread…</div></div></div>`;
@@ -943,7 +959,7 @@ function openDrawer(sid, keepScroll) {
   d.addEventListener('pointercancel', up);
 })();
 
-function closeDrawer() { openSid = null; $('#drawer').classList.remove('open'); delete $('#drawer').dataset.sid; renderCrumbs(); }
+function closeDrawer() { setHash({ session: null, at: null }); openSid = null; $('#drawer').classList.remove('open'); delete $('#drawer').dataset.sid; renderCrumbs(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
 
 // ---------------------------------------------------------------- tooltip
@@ -1019,11 +1035,29 @@ $('#chips').onclick = e => {
 $('#show-archived').onchange = e => { showArchived = e.target.checked; render(); };
 addEventListener('resize', () => S && render());
 if (DEMO) {
-  $('#demo-badge').style.display = '';
+  $('#demo-banner').hidden = false;
   // synthetic PRs and issues link nowhere
-  document.addEventListener('click', e => { if (e.target.closest('a[href="#"]')) e.preventDefault(); }, true);  // onclick handlers still run
+  document.addEventListener('click', e => { if (e.target.closest('a[href="#"]')) e.preventDefault(); }, true);  // only the synthetic '#' links; the project links work  // onclick handlers still run
 }
-refresh().then(refreshLoad);
+// ---------------------------------------------------------------- URL hash state: #session=<sid>[&at=<idx>] · #q=<search> · #scroll=<id> · #only=<section id>
+// Shareable links into a session or a search; the back button closes a panel opened from a link.
+function hashState() { return Object.fromEntries(new URLSearchParams(location.hash.slice(1))); }
+function applyHash() {
+  const h = hashState();
+  if (h.q !== undefined && $('#tq').value !== h.q) { $('#tq').value = h.q; runSearch(); }
+  if (h.session && S?.sMap[h.session] && openSid !== h.session) h.at !== undefined ? openDrawerAt(h.session, +h.at) : openDrawer(h.session);
+  if (!h.session && openSid) closeDrawer();
+  if (h.scroll) document.getElementById(h.scroll)?.scrollIntoView();
+  for (const sec of document.querySelectorAll('main > section')) sec.hidden = !!h.only && sec.id !== h.only;  // #only=sec-timeline: one section
+}
+function setHash(kv) {
+  const h = hashState();
+  for (const [k, v] of Object.entries(kv)) v === null || v === undefined ? delete h[k] : h[k] = v;
+  const next = new URLSearchParams(h).toString();
+  if (next !== location.hash.slice(1)) history.replaceState(null, '', next ? '#' + next : location.pathname + location.search);
+}
+addEventListener('hashchange', applyHash);
+refresh().then(refreshLoad).then(applyHash);
 setInterval(refresh, 5000);
 setInterval(refreshLoad, 60000);
 </script>

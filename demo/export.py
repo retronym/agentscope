@@ -33,7 +33,9 @@ def new_id(x):
 # Vocabulary: generic software-engineering stand-ins
 
 LANES = ["atlas", "lumen", "corelang", "harbor", "quill", "orbit", "tiller", "beacon", "cinder", "drift", "ember", "fjord"]
-ORGS = ["acme", "opencore", "toolsmiths", "northwind", "fabrikam", "initech"]
+ORGS = ["acme", "opencore", "toolsmiths", "northwind", "fabrikam", "initech", "umbrella-labs", "globex", "hooli", "vandelay",
+        "stark-tools", "wonka-dev", "tyrell", "cyberdyne", "aperture", "soylent", "monarch", "oscorp"]
+LIBS = ["kit", "protos", "schemas", "bench-tools", "core-utils", "fixtures", "docs-site", "cli", "codegen", "sdk", "infra", "ui-kit"]
 LOGIN = "demo-dev"
 PEOPLE = ["alex", "sam", "kai", "rin", "jo", "noa", "lee", "max"]
 COMPONENTS = ["incremental cache", "dependency graph", "type checker", "parser recovery", "build pipeline", "CI matrix",
@@ -210,7 +212,7 @@ class Names:
         if repo not in self.repo:
             o, n = repo.split("/", 1)
             owner = self.owner.setdefault(o, ORGS[len(self.owner) % len(ORGS)] + str(len(self.owner)))
-            self.repo[repo] = f"{owner}/{self.map_lane(n) if n in self.lane else 'lib-' + slug(synth_title(n)).split('-')[-1]}"
+            self.repo[repo] = f"{owner}/{self.map_lane(n) if n in self.lane else rng_for('lib', repo).choice(LIBS)}"
         return self.repo[repo]
 
     def map_num(self, repo, n):
