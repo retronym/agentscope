@@ -10,3 +10,22 @@ run = "python3 demo/export.py --out dist/index.html"
 description = "Export the demo and serve dist/ on http://localhost:8380"
 depends = ["demo"]
 run = "python3 -m http.server 8380 --bind 127.0.0.1 --directory dist"
+
+[tasks.publish-demo]
+description = "Force-push dist/index.html to the gh-pages branch (GitHub Pages). Run `mise run demo` first."
+run = """
+set -euo pipefail
+test -f dist/index.html || { echo "no dist/index.html: run 'mise run demo' first"; exit 1; }
+tmp=$(mktemp -d)
+cp dist/index.html "$tmp/"
+touch "$tmp/.nojekyll"
+# date the commit at the demo's own (shifted) snapshot time, so git doesn't record when the real export happened
+when=$(python3 -c "import json,re,sys; h=open('dist/index.html').read(); print(int(json.loads(h.split('window.STATIC_DATA = ',1)[1].split(';</script>',1)[0].replace('<\\\\/','</'))['state']['now']))")
+git -C "$tmp" init -q -b gh-pages
+git -C "$tmp" add -A
+GIT_AUTHOR_DATE="@$when +0000" GIT_COMMITTER_DATE="@$when +0000" \
+  git -C "$tmp" -c user.name="$(git config user.name)" -c user.email="$(git config user.email)" commit -q -m "agentscope demo (synthetic data)"
+git -C "$tmp" push -q -f "$(git remote get-url origin)" gh-pages
+rm -rf "$tmp"
+echo "pushed gh-pages"
+"""

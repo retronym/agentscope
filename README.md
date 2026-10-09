@@ -2,6 +2,8 @@
 
 One local page for keeping track of many concurrent Claude Code agent sessions, the PRs they produce, and the machine load they cause — when the app's own session list stops scaling.
 
+**[Live demo](https://retronym.github.io/agentscope/)** (a real snapshot with all text, names, paths and dates replaced by synthetic ones).
+
 ## Why
 
 With a dozen-plus sessions across several repos, three things get lost:
@@ -69,11 +71,14 @@ The data formats it reads are Claude Code internals, not a public API, and may c
 ```
 mise run demo          # writes dist/index.html, one self-contained file
 mise run demo-serve    # export, then serve it on http://localhost:8380
+mise run publish-demo  # force-push dist/index.html to the gh-pages branch
 ```
 
 The exporter takes a real snapshot of your sessions and keeps its *structure*: timings, activity patterns, CPU and memory, statuses, PR states, session families, process trees. Every piece of *text* is replaced with generated stand-ins of the same shape: titles, prompts, agent messages, branches, repo and owner names, PR titles, paths, command lines. A paragraph becomes a paragraph of similar length, a table a table, a list a list. The page then answers its API calls (including search) from the embedded data, and links to GitHub and the Claude app are disabled.
 
-Before writing, the export checks every string value against a denylist built from the real snapshot: your GitHub login, home path, repo and owner names, session and PR titles, branch names. It refuses to write if anything survives. Timestamps are real, so the demo shows when you worked, though not on what.
+Before writing, the export checks every string value against a denylist built from the real snapshot: your GitHub login, home path, repo and owner names, session and PR titles, branch names. It refuses to write if anything survives.
+
+All timestamps are shifted back by a random 20–60 days plus some hours, drawn per export and never stored; durations, gaps and ordering are kept. The publish commit is dated at the shifted time. GitHub does record each Pages deployment time publicly, so publishing right after exporting lets anyone estimate the offset; leave a few days between `demo` and `publish-demo` if that matters.
 
 ## License
 

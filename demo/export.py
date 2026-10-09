@@ -12,7 +12,7 @@ survives into the output.
 
 Usage: python3 demo/export.py [--out dist/index.html] [--days 7] [--items 100]
 """
-import argparse, hashlib, json, os, random, re, sys, time, uuid
+import argparse, hashlib, json, os, random, re, secrets, sys, time, uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -358,6 +358,54 @@ def anonymize(state, load, threads, procs):
 
 
 # ---------------------------------------------------------------------------------------------
+# Time shift: hide when the work happened, keep durations, gaps and ordering
+
+TIME_KEYS = {"now", "gh_t", "first", "last", "last_prompt_t", "t", "t1", "created", "updated", "merged", "closed", "last_commit"}
+
+
+def random_shift():
+    """Back by 20-60 days and 3-20 hours, a multiple of the 5-minute activity bucket; drawn per export, never stored."""
+    days = 20 + secrets.randbelow(41)
+    minutes = 180 + secrets.randbelow(1021)
+    return -(days * 86400 + minutes // 5 * 300)
+
+
+def shift_times(x, off, key=None):
+    if isinstance(x, dict):
+        out = {}
+        for k, v in x.items():
+            if k == "act" and isinstance(v, dict):  # activity buckets keyed by epoch // 300
+                out[k] = {str(int(b) + off // 300): c for b, c in v.items()}
+            elif k in ("spark", "series", "machine_hist") and isinstance(v, list):  # [[t, ...], ...]
+                out[k] = [[r[0] + off] + [shift_times(y, off) for y in r[1:]] for r in v]
+            elif k in TIME_KEYS and isinstance(v, (int, float)) and v > 1e9:
+                out[k] = v + off
+            else:
+                out[k] = shift_times(v, off, k)
+        return out
+    if isinstance(x, list):
+        return [shift_times(v, off) for v in x]
+    return x
+
+
+def check_shifted(obj, real_now):
+    """No epoch-looking number within a day of the real snapshot time may remain."""
+    bad = []
+
+    def walk(x, path):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                walk(v, path + [k])
+        elif isinstance(x, list):
+            for v in x:
+                walk(v, path)
+        elif isinstance(x, (int, float)) and not isinstance(x, bool) and abs(x - real_now) < 86400:
+            bad.append("/".join(map(str, path[-3:])))
+    walk(obj, [])
+    return bad
+
+
+# ---------------------------------------------------------------------------------------------
 # Leak check
 
 def denylist(state, threads, N):
@@ -414,7 +462,10 @@ def main():
     a = ap.parse_args()
     state, load, threads, procs = snapshot(a.days, a.items)
     st, ld, th, pr, N = anonymize(state, load, threads, procs)
-    obj = dict(state=st, load=ld, threads=th, procs=pr)
+    obj = shift_times(dict(state=st, load=ld, threads=th, procs=pr), random_shift())
+    unshifted = check_shifted(obj, state["now"])
+    if unshifted:
+        sys.exit(f"refusing to write: {len(unshifted)} timestamps were not shifted, e.g. {sorted(set(unshifted))[:8]}")
     data = json.dumps(obj, separators=(",", ":"))
     leaks = check(obj, denylist(state, threads, N))
     if leaks:
@@ -425,7 +476,7 @@ def main():
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     open(a.out, "w").write(page)
     print(f"wrote {a.out}: {len(st['sessions'])} sessions, {len(st['prs'])} PRs, {sum(map(len, th.values()))} thread items, "
-          f"{len(page) / 1e6:.1f} MB; leak check passed", file=sys.stderr)
+          f"{len(page) / 1e6:.1f} MB; leak check passed, timestamps shifted", file=sys.stderr)
 
 
 if __name__ == "__main__":
