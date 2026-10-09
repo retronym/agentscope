@@ -98,3 +98,9 @@ body.jbox-open { overflow: hidden; }
 .jact { font-size: 11.5px; color: var(--ink-2); white-space: normal; }
 .jact b { font-weight: 600; color: var(--ink); }
 #jvmflame { margin-top: 10px; }
+/* captures */
+.jbox-cap { margin: 0 0 18px; }
+table.jt.caps { margin: 4px 0 8px; }
+table.jt.caps td { white-space: normal; }
+table.jt.caps tr.open td { background: var(--surface-2); }
+table.jt.caps .btn-link.on { border-color: var(--accent); color: var(--ink); }

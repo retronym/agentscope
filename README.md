@@ -44,7 +44,9 @@ When you want more than counters, an expanded row can take a snapshot, which doe
 
 While recording, each JVM's row and its session's card say what it's doing (for example *scalac: typer 62% · zinc 20%*), from rules that name compiler phases, test frameworks, dependency resolution and build tools. Every minute of every recording is also kept for a week, losslessly, so **Across JVMs** below the table shows one flame graph over all of them for the last 15 minutes to 7 days, rooted at session, then JVM, then activity, even for JVMs that have since exited.
 
-The design and what's next (async-profiler captures) are in [docs/jvm-profiler.md](docs/jvm-profiler.md).
+With [async-profiler](https://github.com/async-profiler/async-profiler) installed (`brew install async-profiler`), a JVM's full view can also take a **capture**: a few seconds of CPU with allocation and locks, of wall clock across every thread, or of everything it offers (live objects, native memory, native locks). It asks first, because async-profiler's agent stays loaded in the JVM afterwards. Each capture is kept for 30 days and can be shown as a flame graph, compared with another capture (red grew, blue shrank), opened in async-profiler's own HTML view, or downloaded as a `.jfr` for JMC.
+
+The design, what was learned building it, and what's next are in [docs/jvm-profiler.md](docs/jvm-profiler.md).
 
 ### Timeline
 
@@ -111,6 +113,7 @@ History lives in SQLite at `~/.cache/agentscope/agentscope.db`, one row per minu
 - `session_minute`, `bucket_minute`: CPU and memory per session and per machine group. Kept a year.
 - `proc`, `proc_minute`: every process that used ≥ 0.5% CPU or ≥ 50 MB in a minute, with its command line, working directory, owning session and how it was attributed. Kept 30 days.
 - `jvm`, `jvm_minute`: every JVM seen, with its session, version, collector and options, and its counters per minute. Kept 30 days.
+- `capture`: async-profiler captures; the `.jfr` files sit in `~/.cache/agentscope/captures`. Kept 30 days.
 - `frame`, `node`, `tgroup`, `sample_blob`: recorded profiles, as constant pools (frames, stacks as a prefix tree, thread groups) and a compressed blob per JVM, minute and kind. Kept 7 days.
 - `msg_fts`: the full-text index over prompts and agent messages.
 

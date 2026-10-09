@@ -39,6 +39,7 @@ function recDot(j) {
 
 // ---------------------------------------------------------------- profile in the full view
 const PKINDS = [['cpu', 'CPU'], ['native', 'native'], ['alloc', 'allocation'], ['lock', 'locks'], ['park', 'parked']];
+const KIND_LABEL = { cpu: 'CPU', native: 'native', alloc: 'allocation', lock: 'locks', park: 'parked', wall: 'wall clock', live: 'live objects', nativemem: 'native memory', nativelock: 'native locks' };
 const prof = {};  // jvm id -> {summary, flame, sel, kind, window, thread, zoom, reverse, busy}
 const LABEL_W = 210, ROW_H = 13, HEAT_H = 80, FLAME_ROW = 17;
 
@@ -57,7 +58,8 @@ function profileSection(j) {
 const qid = id => typeof id === 'string' ? `'${id}'` : id;
 function setProf(id, patch_) {
   Object.assign(prof[id], patch_);
-  if (id === 'all') { renderAllFlame(); loadAllFlame(true); } else { renderJvmBox(); loadProfile(id, true); }
+  if (prof[id].load) prof[id].load();  // a capture's flame graph
+  else if (id === 'all') { renderAllFlame(); loadAllFlame(true); } else { renderJvmBox(); loadProfile(id, true); }
 }
 
 // Called on every render of the full view: refetch at most every few seconds, flame when the question changed.
@@ -179,7 +181,8 @@ function brush(c, id, w, s, laneAt) {
 }
 
 // ---------------------------------------------------------------- flame graph (icicle: root on top), click to zoom
-const unit = (kind, v) => kind === 'cpu' || kind === 'native' ? `${v} samples (≈ ${(v * (kind === 'cpu' ? 0.02 : 0.1)).toFixed(1)} s)` : kind === 'alloc' ? mb(v) + ' allocated (sampled)' : `${(v / 1000).toFixed(1)} s waited`;
+const unit = (kind, v) => kind === 'cpu' || kind === 'native' || kind === 'wall' ? `${v} samples` : kind === 'alloc' ? mb(v) + ' allocated (sampled)' :
+  kind === 'live' ? mb(v) + ' live' : kind === 'nativemem' ? mb(v) + ' malloc\'d' : `${(v / 1000).toFixed(1)} s waited`;
 function drawFlame(id) {
   const p = prof[id], f = p.flame, head = document.getElementById(`flameh-${id}`);
   if (!f || !head) return;
@@ -188,7 +191,7 @@ function drawFlame(id) {
   for (const name of p.zoom) { const k = root[2].find(c => c[0] === name); if (!k) { p.zoom = []; root = f.root; break; } root = k; path.push(name); }
   patch(head, `<b>Flame graph</b>
     <span class="seg" title="Callers first (top-down), or where the time is spent first and then who called it (reversed, bottom-up)">${[[false, '↓ top-down'], [true, '↑ reversed']].map(([r, l]) => `<button class="${!!p.reverse === r ? 'on' : ''}" onclick="setProf(${qid(id)}, {reverse: ${r}, zoom: []})">${l}</button>`).join('')}</span>
-    <span class="sub">${esc(PKINDS.find(k => k[0] === p.kind)[1])} · ${id === 'all' ? esc(ALL_RANGES.find(r => r[0] === p.range)[1]) + ', per minute, every recorded JVM' : p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${qid(id)},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
+    <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${String(id).startsWith('cap') ? (f.diff ? 'difference: red grew, blue shrank, against the chosen capture' : 'capture') : id === 'all' ? esc(ALL_RANGES.find(r => r[0] === p.range)[1]) + ', per minute, every recorded JVM' : p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${qid(id)},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
     ${p.zoom.length ? `<a href="#" class="sub" onclick="setProf(${qid(id)},{zoom:[]});return false">↺ reset zoom</a> <span class="sub">${p.zoom.map(z => esc(shortName(z))).join(' › ')}</span>` : ''}`);
   const rows = [];  // [depth, x, w, node]
   const lay = (n, d, x, w) => { rows.push([d, x, w, n]); let cx = x; for (const k of n[2]) { const kw = w * k[1] / n[1]; if (kw >= 0.0008) lay(k, d + 1, cx, kw); cx += kw; } };
@@ -200,11 +203,17 @@ function drawFlame(id) {
   for (const [d, x, fw, n] of rows) {
     const px = x * w, pw = fw * w, y = d * FLAME_ROW;
     if (pw < 0.5) continue;
-    g.fillStyle = n[3] || d === 0 ? (dark ? '#8a877e' : '#d9d6cb') : frameColor(n[0], dark); g.fillRect(px, y, Math.max(0.5, pw - 0.5), FLAME_ROW - 1);  // n[3]: a label level (session, JVM, activity)
+    g.fillStyle = f.diff ? diffColor(n, f, dark) : n[3] || d === 0 ? (dark ? '#8a877e' : '#d9d6cb') : frameColor(n[0], dark);  // n[3]: a label level (session, JVM, activity)
+    g.fillRect(px, y, Math.max(0.5, pw - 0.5), FLAME_ROW - 1);
     if (pw > 30) { g.fillStyle = '#1b1b1a'; g.fillText(fit(g, d === 0 ? (p.zoom.length ? shortName(n[0]) : 'all') : n[3] ? n[0] : shortName(n[0]), pw - 6), px + 3, y + FLAME_ROW / 2); }
   }
   const hit = e => { const b = c.getBoundingClientRect(), x = (e.clientX - b.left) / w, d = Math.floor((e.clientY - b.top) / FLAME_ROW); return rows.find(r => r[0] === d && x >= r[1] && x < r[1] + r[2]); };
-  c.onmousemove = e => { const h = hit(e); if (!h) return hideTip(); tip(e, `<div class="tt" style="word-break:break-all">${esc(h[3][0])}</div><div class="tm">${esc(unit(p.kind, h[3][1]))} · ${(h[3][1] / f.total * 100).toFixed(1)}% of all</div>`); };
+  c.onmousemove = e => {
+    const h = hit(e); if (!h) return hideTip();
+    const n = h[3], share = v => (v / Math.max(1, f.total) * 100).toFixed(1) + '%';
+    tip(e, `<div class="tt" style="word-break:break-all">${esc(n[0])}</div><div class="tm">${esc(unit(p.kind, n[1]))} · ${share(n[1])} of all</div>` +
+      (f.diff ? `<div class="tm">before: ${esc(unit(p.kind, n[4] || 0))} · ${((n[4] || 0) / Math.max(1, f.before_total) * 100).toFixed(1)}% of all</div>` : ''));
+  };
   c.onmouseleave = hideTip;
   c.onclick = e => {
     const h = hit(e); if (!h || h[0] === 0) return;
@@ -214,6 +223,12 @@ function drawFlame(id) {
     for (const x of chain) names.push(x[3][0]);
     p.zoom = p.zoom.concat(names); drawFlame(id);
   };
+}
+// Differential: the share of all samples a frame had after, against before. Red grew, blue shrank, grey about the same.
+function diffColor(n, f, dark) {
+  const a = n[1] / Math.max(1, f.total), b = (n[4] || 0) / Math.max(1, f.before_total), r = (a - b) / Math.max(a, b, 1e-9);
+  const l = (dark ? 62 : 82) - 28 * Math.min(1, Math.abs(r));
+  return Math.abs(r) < 0.05 ? (dark ? '#77756f' : '#d9d6cb') : r > 0 ? `hsl(4, 75%, ${l}%)` : `hsl(215, 70%, ${l}%)`;
 }
 const shortName = n => n.replace(/^([a-z_$][\w$]*\.)+(?=[A-Z_$][\w$]*[.$])/, m => m.split('.').filter(Boolean).map(x => x[0]).join('.') + '.');
 function frameColor(name, dark) {
@@ -257,4 +272,4 @@ function activityLine(j, n = 3) {
 
 // Canvases are drawn at their current width: redraw when it changes
 let _resizeT;
-addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' ? drawFlame('all') : drawProfile(+id)); }, 100); });
+addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' || id.startsWith('cap') ? drawFlame(id) : drawProfile(+id)); }, 100); });

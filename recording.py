@@ -169,19 +169,24 @@ class Recorder:
         self._save()
 
     def _save(self):
+        """The switch, scope and per-JVM choices survive a restart; so do the pids, to clean up after a crash."""
         try:
             pids = sorted({r["pid"] for r in self.recs.values() if r["live"]})
             with open(self.state_file, "w") as f:
-                json.dump(dict(pids=pids), f)
+                json.dump(dict(pids=pids, on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items()}), f)
         except OSError:
             pass
 
     def _stop_leftovers(self):
         try:
-            pids = json.load(open(self.state_file)).get("pids", [])
+            saved = json.load(open(self.state_file))
         except (OSError, ValueError):
             return
-        for pid in pids:
+        self.on, self.scope, self.since = bool(saved.get("on")), saved.get("scope") or "agents", saved.get("since")
+        self.manual = {int(k): v for k, v in (saved.get("manual") or {}).items()}
+        if self.on or any(self.manual.values()):
+            return  # recording carries on: reconcile adopts the running 'agentscope' recordings instead of restarting them
+        for pid in saved.get("pids", []):
             try:
                 os.kill(pid, 0)
             except OSError:

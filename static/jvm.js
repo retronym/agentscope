@@ -140,7 +140,7 @@ function renderJvmBox() {
     box = document.createElement('div');
     box.id = 'jvmbox';
     box.className = 'jbox';
-    box.innerHTML = '<div class="jbox-panel"><button class="close" title="close (Esc)" onclick="closeJvmBox()">✕</button><div class="jbox-body"><div class="jbox-main"></div><div class="jbox-prof"></div><div class="jbox-detail"></div></div></div>';
+    box.innerHTML = '<div class="jbox-panel"><button class="close" title="close (Esc)" onclick="closeJvmBox()">✕</button><div class="jbox-body"><div class="jbox-main"></div><div class="jbox-prof"></div><div class="jbox-cap"></div><div class="jbox-detail"></div></div></div>';
     box.onclick = e => { if (e.target === box) closeJvmBox(); };
     document.body.appendChild(box);
   }
@@ -162,6 +162,8 @@ function renderJvmBox() {
   patch(box.querySelector('.jbox-prof'), profileSection(j));
   patch(box.querySelector('.jbox-detail'), jvmDetail(j, true));
   loadProfile(j.id);
+  renderCaptures(j.id);
+  loadCaptures(j.id);
 }
 // Esc closes the full-size view before anything else (the side panel's own Esc handler runs later, in bubbling order)
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && boxId != null) { e.stopImmediatePropagation(); closeJvmBox(); } }, true);

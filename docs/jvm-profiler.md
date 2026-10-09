@@ -1,6 +1,6 @@
 # Design: a built-in JVM profiler
 
-Status: phases 1 (JVM top), 2 (helper and snapshots), 3 (continuous JFR) and 4 (across JVMs) are done; phase 5 is a proposal.
+Status: all five phases are done. What remains is under Future work.
 
 ## Problem
 
@@ -25,7 +25,7 @@ It has to stay a well-behaved guest. These JVMs are running the agents' builds, 
 
 Plus on-demand **snapshots** (`Thread.print`, `GC.heap_info`, `VM.native_memory`), each one click, each labelled with what it costs (`GC.class_histogram` forces a full GC, so it says so).
 
-Why JFR for the continuous tier rather than async-profiler: on JDK 21+, dynamically loading a JVMTI agent prints `WARNING: A JVM TI agent has been loaded dynamically` to the *target's* stderr (JEP 451). For an sbt server, that lands in the build output the agent is reading. `JFR.start` via jcmd is a diagnostic command, not an agent, and prints nothing. JFR's sampler is also off-safepoint on modern JDKs, which is good enough for "where does the time go". async-profiler stays for the questions JFR answers poorly: wall-clock across all threads, native frames, precise allocation and lock profiling. With `--jfrsync`, its events go into the same recording, so tier 2 needs no separate pipeline.
+Why JFR for the continuous tier rather than async-profiler: `JFR.start` via jcmd is a diagnostic command, not an agent, so it leaves nothing behind in the target, whereas async-profiler's agent can't be unloaded once attached. JEP 451 also says a dynamically loaded JVMTI agent prints a warning to the *target's* stderr on JDK 21+ (for an sbt server, into the build output the agent is reading); in practice async-profiler 4.5 attaching to JDK 21.0.12 printed nothing, but that's not something to rely on across versions. JFR's sampler is good enough for "where does the time go". async-profiler stays for the questions JFR answers poorly: wall-clock across all threads, native frames, precise allocation and lock profiling.
 
 ### 2. Tier 0 is a pure-Python hsperfdata reader
 
@@ -48,7 +48,7 @@ The protocol with Python is JSON lines over stdin/stdout. The helper is started 
 
 Libraries, each because it pulls its weight:
 
-- **`tools.profiler:jfr-converter`** (async-profiler's converter, on Maven Central): its HTML flame graph, heatmap and diff outputs for deep dives, without async-profiler having to be installed.
+- (Planned, then dropped: `tools.profiler:jfr-converter` for async-profiler's HTML. Captures need async-profiler installed anyway, and it ships `jfrconv`, so the server runs that.)
 - **`jackson-jr-objects`** (~100 KB): JSON both ways on the pipe, rather than hand-rolled escaping.
 
 Tier 2 still needs async-profiler installed (`asprof` and its native library); without it the capture buttons are hidden.
@@ -117,7 +117,7 @@ Thread groups are thread names with numeric suffixes stripped (`scala-execution-
 
 ### 9. Rendering: our own canvas views, asprof's HTML for deep dives
 
-Flame graph and heatmap are hand-written canvas components (in `static/jvm.js`, not `index.html`), because they need to be linked: brushing the heatmap or thread lanes re-queries the flame graph, the flame graph is rooted at sessions, and they share the page's theme. For a deep dive, an "Open in async-profiler" button renders the selected range with the helper's `jfr-converter` (or a diff between two ranges or captures), reusing its search, reverse and diff views rather than rebuilding them.
+Flame graph and heatmap are hand-written canvas components (in `static/jvm.js`, not `index.html`), because they need to be linked: brushing the heatmap or thread lanes re-queries the flame graph, the flame graph is rooted at sessions, and they share the page's theme. For a deep dive, a capture opens in async-profiler's own HTML flame graph (`jfrconv`), with its search and reverse views; differential flame graphs between captures are drawn by the page's renderer.
 
 ## What the user sees
 
@@ -153,7 +153,11 @@ Each phase is usable on its own.
   - The first cut folded stacks under 0.2% into their callers to bound storage. Unnecessary: stacks are very compressible (that's most of what the JFR format is about), so the store keeps everything and compresses instead.
   - Frames are opaque. async-profiler's frames won't look like JFR's (C++ and kernel frames, itable/vtable stubs, threads with no Java frames), so a non-Java frame keeps its producer's name plus its frame type (` [Native]`, ` [C++]`...), the classifier only reads package names from Java-shaped frames, and the page colours anything else as native.
   - Unexplained, noted for later: the javac workload, compiling the same unchanged and well-typed sources in a loop, failed once after about 11 minutes with an inference error ("inference variable M has incompatible bounds") in a JVM whose recording had been started and stopped several times.
-- **TODO 5. Captures (tier 2).** async-profiler start/stop with `--jfrsync`; capture list; open in asprof's HTML; diff.
+- **DONE 5. Captures (tier 2).** In a JVM's full view: capture N seconds with async-profiler, after a confirmation that names the cost (its agent stays loaded). Three presets, because on macOS CPU and wall-clock sampling can't run together: *CPU, allocation, locks* (`-e cpu --alloc 512k --lock 10ms`), *wall clock* (`-e wall`), *everything* (`--all`: wall, allocation, live objects, native memory, native and Java locks; no CPU on macOS). One capture per JVM at a time. `captures.py` runs `asprof` into a JFR file beside the database (kept 30 days) and keeps a `capture` table. The helper reads capture files on demand (`Captures`, a small LRU) into the same `Profile`, which now knows async-profiler's events (`profiler.WallClockSample`, `jdk.ObjectAllocationInNewTLAB`, `profiler.LiveObject`, `profiler.Malloc`, `profiler.NativeLock`). Each capture lists the kinds it holds; each shows as a flame graph (top-down or reversed), as a diff against another capture (red grew, blue shrank, by share of all samples), in async-profiler's own HTML via `jfrconv`, or as the `.jfr` to download. Record now survives a server restart: the switch, scope and per-JVM choices are saved, and running recordings are adopted. Captures are standalone files rather than `--jfrsync` into the continuous recording: simpler, independent of Record, and diffable. Learned along the way:
+  - async-profiler names a native or C++ frame's "class" after its library (`libjvm.dylib`, `libsystem_kernel.dylib`), so frames are named by their JFR frame type, never by parsing: Java types (`Interpreted`, `JIT compiled`, `Inlined`, `C1 compiled`) give `class.method`; others give the symbol and a type tag, `thread_native_entry [C++]`.
+  - async-profiler's wall-clock samples include native threads with no Java name (`[tid=259]`).
+  - No JEP 451 warning appeared in the target's output (async-profiler 4.5, JDK 21.0.12, several attaches).
+  - Canvases sized from their container's `clientWidth` overflowed by its padding and never shrank; they now take 100% of the content box and redraw on resize.
 
 Before phase 3: a spike that a JDK 21 consumer can tail repositories written by the oldest JVMs we expect (JDK 8u, 11, 17), and that `EventStream.openRepository` copes with chunk rotation and the target exiting mid-stream.
 
@@ -169,7 +173,8 @@ Before phase 3: a spike that a JDK 21 consumer can tail repositories written by 
 
 Small files, one concern each:
 
-- `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, snapshots. `helper.py`: the helper process. Both imported by `agentscope.py`.
+- `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, snapshots. `helper.py`: the helper process. `captures.py`: async-profiler captures. All imported by `agentscope.py`.
+- `static/captures.js`: the Captures section of a JVM's full view.
 - `recording.py`: the Record switch, scope and per-JVM recordings; activities and per-minute storage. `profiles.py`: the stored profiles (pools, blobs, the machine-wide query).
 - `static/jvm.js`: the JVMs section, full view and snapshots. `static/profile.js`: the Record button, heatmap, thread lanes and flame graph.
 - `profiler/`: the Maven project (`pom.xml`, `mvnw`, `src/main/java/...`, `src/main/resources/agentscope.jfc`), building `profiler/target/agentscope-profiler.jar`.

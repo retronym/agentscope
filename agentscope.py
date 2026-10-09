@@ -23,7 +23,7 @@ import argparse, atexit, collections, glob, json, os, re, signal, sqlite3, subpr
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
-import helper, jvm, profiles, recording
+import captures, helper, jvm, profiles, recording
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
@@ -525,6 +525,7 @@ def db_init():
         c.executescript(SCHEMA)
         c.executescript(jvm.SCHEMA)
         c.executescript(profiles.SCHEMA)
+        c.executescript(captures.SCHEMA)
         # one-off import of the JSONL history written by earlier versions
         for f in sorted(glob.glob(os.path.join(CACHE, "load-*.jsonl"))):
             rows_s, rows_b = [], []
@@ -550,6 +551,8 @@ def db_prune():
         c.execute("DELETE FROM bucket_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
         jvm.prune(c, now)
         profiles.prune(c, now)
+        if _captures:
+            _captures.prune(c, now)
 
 
 SYSTEM_HINTS = ("/System/", "/usr/libexec", "/usr/sbin", "/sbin/", "/Library/SystemExtensions", "/Library/Apple/") + \
@@ -993,7 +996,8 @@ def build_state(sampler):
         for p in s["proposals"]:
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
     return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), jvm_helper=_helper.unavailable(),
-                record=sampler.recorder.state(time.time()) if sampler.recorder else None, claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+                record=sampler.recorder.state(time.time()) if sampler.recorder else None,
+                asprof=bool(captures.asprof()) if sampler.recorder else False, claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -1029,7 +1033,8 @@ def _memsize():
 # HTTP
 
 _helper = helper.Helper()
-STATIC = ("static/jvm.js", "static/profile.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
+_captures = None  # set by serve()
+STATIC = ("static/jvm.js", "static/profile.js", "static/captures.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
@@ -1044,6 +1049,8 @@ def serve(port):
         sampler.hist.append((r["t"], sess, buckets))
     sampler.recorder = recording.Recorder(sampler.jvms, _helper, os.path.join(os.path.dirname(DB_FILE), "recording.json"), db)  # beside the db: a dev copy keeps its own
     sampler.recorder.stored_first()
+    global _captures
+    _captures = captures.Captures(db, _helper, sampler.jvms, os.path.join(os.path.dirname(DB_FILE), "captures"))
     atexit.register(sampler.recorder.stop_all)
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # run atexit (stop recordings) on kill, too
     threading.Thread(target=sampler.loop, args=(meta_cached,), daemon=True).start()
@@ -1106,6 +1113,22 @@ def serve(port):
                     r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
                                      kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1")
                     self._send(200, json.dumps(r["flame"]), "application/json")
+                elif path == "/api/captures":
+                    self._send(200, json.dumps(_captures.list(int(q["jvm"]) if q.get("jvm") else None)), "application/json")
+                elif path == "/api/capture/flame":
+                    self._send(200, json.dumps(_captures.flame(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("reverse") == "1",
+                                                               int(q["base"]) if q.get("base") else None)), "application/json")
+                elif path == "/api/capture/html":
+                    self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu")), "text/html; charset=utf-8")
+                elif path == "/api/capture/file":
+                    p = _captures.path(int(q.get("id", 0)))
+                    data = open(p, "rb").read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(p)}"')
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
                 elif path == "/api/jvms/flame":
                     self._send(200, json.dumps(profiles.flame(db, float(q.get("t0", 0)), float(q.get("t1", time.time() + 60)), q.get("kind", "cpu"),
                                                               q.get("reverse") == "1", jvm_labels)), "application/json")
@@ -1133,6 +1156,9 @@ def serve(port):
                 elif self.path == "/api/record":
                     sampler.recorder.set(bool(body.get("on")), body.get("scope"))
                     self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")
+                elif self.path == "/api/jvm/capture":
+                    cid = _captures.start(int(body.get("id", 0)), str(body.get("mode", "cpu")), int(body.get("seconds", 30)))
+                    self._send(200, json.dumps(dict(id=cid)), "application/json")
                 elif self.path == "/api/jvm/record":
                     sampler.recorder.set_jvm(int(body.get("id", 0)), bool(body.get("on")))
                     self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")
