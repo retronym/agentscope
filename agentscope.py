@@ -198,6 +198,51 @@ def parse_transcript(path):
     return d
 
 
+def _tool_summary(blk):
+    inp = blk.get("input") or {}
+    name = blk.get("name", "?").replace("mcp__", "").split("__")[-1]
+    detail = inp.get("description") or inp.get("command") or inp.get("file_path") or inp.get("pattern") or inp.get("url") or inp.get("title") or ""
+    return name, str(detail).strip().splitlines()[0][:140] if detail else ""
+
+
+def read_thread(sid, limit=60):
+    """The session's conversation as display items: user prompts, assistant text, and runs of tool calls collapsed."""
+    with _index_lock:
+        path = next((p for p, e in _index.items() if e["d"]["sid"] == sid), None)
+    if not path:
+        return None
+    items = []
+    for line in open(path, errors="replace"):
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("isSidechain"):
+            continue
+        t = iso_to_epoch(r.get("timestamp"))
+        if r.get("type") == "user":
+            hp = _is_human_prompt(r)
+            if hp:
+                items.append(dict(role="user", t=t, text=hp[:20000]))
+        elif r.get("type") == "assistant":
+            for blk in (r.get("message") or {}).get("content") or []:
+                if not isinstance(blk, dict):
+                    continue
+                if blk.get("type") == "text" and blk.get("text", "").strip():
+                    items.append(dict(role="assistant", t=t, text=blk["text"][:20000]))
+                elif blk.get("type") == "tool_use":
+                    if items and items[-1]["role"] == "tools":
+                        items[-1]["calls"].append(_tool_summary(blk))
+                        items[-1]["t1"] = t
+                    else:
+                        items.append(dict(role="tools", t=t, t1=t, calls=[_tool_summary(blk)]))
+    for it in items:
+        if it["role"] == "tools" and len(it["calls"]) > 40:
+            it["more"] = len(it["calls"]) - 40
+            it["calls"] = it["calls"][-40:]
+    return dict(total=len(items), items=items[-limit:])
+
+
 def refresh_index():
     global _index
     if not _index:
@@ -645,7 +690,7 @@ def build_state(sampler):
         last = max(filter(None, [t.get("last"), (m.get("lastActivityAt") or 0) / 1000 or None, ((l or {}).get("updatedAt") or 0) / 1000 or None]), default=None)
         sessions.append(dict(
             sid=sid, local=m.get("sessionId"), title=m.get("title") or (l or {}).get("name") or t.get("title") or (t.get("first_prompt") or "")[:80] or sid[:8],
-            cwd=cwd, lane=lane_of(cwd, m.get("originCwd")), branch=m.get("branch") or (t.get("branches") or [None])[0],
+            cwd=cwd, lane=lane_of(cwd, m.get("originCwd")), repo=repo_of(m.get("originCwd")) or repo_of(cwd), branch=m.get("branch") or (t.get("branches") or [None])[0],
             branches=list(dict.fromkeys([b for b in [m.get("branch")] + (m.get("writtenBranches") or []) + (t.get("branches") or []) if b])),
             first=t.get("first") or (m.get("createdAt") or 0) / 1000 or None, last=last,
             act=t.get("act", {}), prompts=t.get("prompts", 0), out_tokens=t.get("out_tokens", 0), subagents=t.get("subagents", 0),
@@ -744,6 +789,9 @@ def serve(port):
                     self._send(200, open(os.path.join(HERE, "index.html")).read(), "text/html; charset=utf-8")
                 elif path == "/api/state":
                     self._send(200, json.dumps(build_state(sampler)), "application/json")
+                elif path == "/api/thread":
+                    th = read_thread(q.get("sid", ""), int(q.get("limit", 60)))
+                    self._send(200 if th else 404, json.dumps(th), "application/json")
                 elif path == "/api/load":
                     self._send(200, json.dumps(load_history(float(q.get("since", time.time() - 86400)))), "application/json")
                 else:

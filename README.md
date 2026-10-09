@@ -16,7 +16,7 @@ With a dozen-plus sessions across several repos, three things get lost:
 - **Timeline** — one lane per repo (forks and upstream share a lane). Sessions are bars shaded by agent activity, dots mark your prompts, ◇/◆ mark PRs opened/merged on the owning session's row, dashed links show spawned-from, and a band shows the lane's CPU history.
 - **Loose ends** — needs you; landable PRs; PRs in trouble; quiet sessions owning open PRs; proposals and offers never taken up; open PRs with no session; unarchived sessions idle for days.
 
-Status chips (waiting for you · active · working · GitHub) filter all three views. Click any session for its last ask, the agent's last words, how it started, processes, family and a `claude --resume` command; **↗ Claude** opens it in the desktop app via `claude://code/continue?session=local_<id>` (unarchived desktop sessions only). Every PR and issue reference is a link.
+Status chips (waiting for you · active · working · GitHub) filter all three views. Click any session for its last ask, the agent's last words, how it started, processes, family and a `claude --resume` command; **↗ Claude** opens it in the desktop app via `claude://code/continue?session=local_<id>` (unarchived desktop sessions only). The detail panel is a thread view of the transcript: markdown-rendered messages, with runs of tool calls collapsed. Every PR and issue reference is a link; a bare `#N` resolves to a known PR with that number in the session's repo lane (so a fork checkout still links upstream PRs), else to the session's own remote.
 
 ## Load attribution
 

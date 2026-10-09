@@ -7,42 +7,50 @@
 <style>
 :root {
   color-scheme: light;
-  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f2f1ed;
-  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
-  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --page: #faf9f5; --surface: #ffffff; --surface-2: #f0eee6;
+  --ink: #141413; --ink-2: #3d3d3a; --muted: #73726c;
+  --grid: #e8e6dc; --axis: #c9c6b8; --border: rgba(31,30,29,0.13); --accent: #c96442;
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s7: #4a3aa7;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
-  --merged: #4a3aa7; --busy: #2a78d6;
+  --merged: #4a3aa7; --busy: #c96442;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
-    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --page: #262624; --surface: #30302e; --surface-2: #1f1e1d;
+    --ink: #faf9f5; --ink-2: #c2c0b6; --muted: #9c9a92;
+    --grid: #3a3a37; --axis: #4a4945; --border: rgba(222,220,209,0.13); --accent: #d97757;
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s7: #9085e9;
-    --merged: #9085e9; --busy: #3987e5;
+    --merged: #9085e9; --busy: #d97757;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
-  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --page: #262624; --surface: #30302e; --surface-2: #1f1e1d;
+  --ink: #faf9f5; --ink-2: #c2c0b6; --muted: #9c9a92;
+  --grid: #3a3a37; --axis: #4a4945; --border: rgba(222,220,209,0.13); --accent: #d97757;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s7: #9085e9;
-  --merged: #9085e9; --busy: #3987e5;
+  --merged: #9085e9; --busy: #d97757;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--page); color: var(--ink); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+:root {
+  /* the Claude apps' faces when installed, else the platform's native sans / serif */
+  --font-ui: "Anthropic Sans", "Styrene B", ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+  --font-prose: "Anthropic Serif", "Copernicus", "Tiempos Text", ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+body { margin: 0; background: var(--page); color: var(--ink); font: 13px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
 header { position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
+header h1 { font: 500 19px/1 var(--font-prose); margin: 0 8px 0 0; letter-spacing: -.01em; }
+header h1::before { content: "✻ "; color: var(--accent); }
 .tile { display: flex; flex-direction: column; min-width: 90px; }
 .tile .v { font-size: 18px; font-weight: 600; }
 .tile .l { color: var(--muted); font-size: 11px; }
 .spacer { flex: 1; }
 .ctl { display: flex; gap: 6px; align-items: center; }
-button, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; }
+button, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
+input[type=search]:focus { outline: none; border-color: var(--accent); }
 button { cursor: pointer; }
 button.on { background: var(--ink); color: var(--page); }
 .chip { border-radius: 99px; display: inline-flex; gap: 5px; align-items: center; }
@@ -53,7 +61,7 @@ label.chk { color: var(--ink-2); display: flex; gap: 4px; align-items: center; c
 main { padding: 14px 20px 60px; display: flex; flex-direction: column; gap: 22px; }
 section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
 section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
 .card { padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; position: relative; }
 .card:hover { border-color: var(--axis); }
@@ -93,20 +101,51 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .item .a .x { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .b { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .when { color: var(--muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); background: var(--surface); border-left: 1px solid var(--axis); z-index: 10; transform: translateX(100%); transition: transform .15s; overflow-y: auto; padding: 16px 18px 40px; }
+#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(780px, 100vw); background: var(--surface); border-left: 1px solid var(--axis); z-index: 10; transform: translateX(100%); transition: transform .15s; overflow-y: auto; padding: 20px 28px 60px; background: var(--page); }
 #drawer.open { transform: none; box-shadow: -10px 0 30px rgba(0,0,0,.3); }
-#drawer h2 { margin: 0 0 4px; font-size: 16px; }
+#drawer h2 { margin: 0 40px 8px 0; font: 500 22px/1.25 var(--font-prose); letter-spacing: -.01em; }
 #drawer .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
 #drawer pre a, .sum a, .meta a, .item .b a { color: var(--s1); }
 #drawer pre { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow: auto; }
 #drawer table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
 #drawer td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
-#drawer .close { position: absolute; top: 12px; right: 14px; }
+#drawer .close { position: absolute; top: 16px; right: 20px; border: 0; background: transparent; font-size: 16px; color: var(--muted); }
+.thread { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
+.msg-user { align-self: flex-end; max-width: 86%; background: var(--surface-2); border-radius: 14px; padding: 9px 14px; font: 14px/1.55 var(--font-ui); }
+.msg-asst { font: 15.5px/1.65 var(--font-prose); color: var(--ink); }
+.msg-meta { font: 11px var(--font-ui); color: var(--muted); margin-bottom: 3px; }
+.msg-user .msg-meta { text-align: right; }
+.msg-tools { font: 12px/1.5 var(--font-ui); color: var(--muted); border-left: 2px solid var(--border); padding: 2px 0 2px 10px; }
+.msg-tools summary { cursor: pointer; list-style: none; }
+.msg-tools summary::-webkit-details-marker { display: none; }
+.msg-tools summary::before { content: "▸ "; }
+.msg-tools[open] summary::before { content: "▾ "; }
+.msg-tools ol { margin: 4px 0 0; padding-left: 18px; font-family: var(--font-mono); font-size: 11.5px; }
+.msg-gap { text-align: center; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md table { margin: 0 0 .7em; }
+.md ul, .md ol { padding-left: 1.4em; }
+.md li { margin: .15em 0; }
+.md h1, .md h2, .md h3, .md h4 { font-family: var(--font-ui); font-weight: 600; line-height: 1.3; margin: 1em 0 .4em; }
+.md h1 { font-size: 1.25em; } .md h2 { font-size: 1.12em; } .md h3, .md h4 { font-size: 1em; }
+.md a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 2px; }
+.md code { font: .84em var(--font-mono); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: .08em .35em; }
+.md pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; max-height: none; }
+.md pre code { background: none; border: 0; padding: 0; font-size: 12.5px; line-height: 1.5; white-space: pre; }
+.md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--ink-2); }
+.md table { border-collapse: collapse; font: 13px var(--font-ui); display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.md th { background: var(--surface-2); font-weight: 600; }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+.md-plain { white-space: pre-wrap; }
+.btn-link { background: none; border: 1px solid var(--border); color: var(--ink-2); font-size: 12px; }
 .copy { cursor: pointer; }
 .empty { color: var(--muted); padding: 6px 0; }
 .err { color: var(--critical); }
 @media (max-width: 700px) { #machine { grid-template-columns: 1fr; } .ends { grid-template-columns: 1fr; } header, main { padding-left: 16px; padding-right: 16px; } }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head>
 <body>
 <header>
@@ -302,7 +341,7 @@ function renderCards() {
     if (st.k !== 'busy' && st.k !== 'waiting' && !s.summary?.needs_action && (s.load?.cpu || 0) < 50)
       return `<div class="panel card ${st.k}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
         <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="t" style="flex:1;min-width:0" title="${esc(s.title)}">${esc(s.title)}</span><span class="when">${ago(s.last)}</span>${claudeLink(s)}</div>
-        ${s.summary?.status_detail ? `<div class="meta">${lk(s.summary.status_detail)}</div>` : ''}
+        ${s.summary?.status_detail ? `<div class="meta">${lk(s.summary.status_detail, s)}</div>` : ''}
         ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}</div>`;
     const sum = s.summary?.status_detail || s.report || '';
     const need = s.summary?.needs_action;
@@ -312,8 +351,8 @@ function renderCards() {
       <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
       <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
       ${s.branch ? `<div class="meta">${esc(s.branch)}</div>` : ''}
-      ${sum ? `<div class="sum">${lk(sum)}</div>` : ''}
-      ${need ? `<div class="sum" style="color:var(--ink)"><b>⚑ needs you:</b> ${lk(need)}</div>` : ''}
+      ${sum ? `<div class="sum">${lk(sum, s)}</div>` : ''}
+      ${need ? `<div class="sum" style="color:var(--ink)"><b>⚑ needs you:</b> ${lk(need, s)}</div>` : ''}
       ${s.load ? `<div class="load">${spark(s)}<span>${cores(s.load.cpu)} cores</span><span>${gb(s.load.rss)}</span></div>${procs ? `<div class="meta">${procs}</div>` : ''}` : ''}
       ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}
     </div>`;
@@ -482,13 +521,26 @@ function renderTimeline() {
 // GitHub refs: every PR / issue mention is a link.
 const ghUrl = (key, kind) => { const [repo, n] = key.split('#'); return `https://github.com/${repo}/${kind}/${n}`; };
 const ghA = (key, kind, label) => `<a href="${esc(ghUrl(key, kind))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(label ?? key)}</a>`;
-function linkify(text) {
-  // input is already escaped; links github URLs and owner/repo#N refs
-  return text
+function linkify(text, s) {
+  // input is already escaped; links github URLs, owner/repo#N, and (given a session) bare #N
+  text = text
     .replace(/https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/(\d+)[^\s<)"'&]*/g, (m, r, k, n) => ghA(`${r}#${n}`, k, m))
     .replace(/(^|[\s(\[,;:])([A-Za-z0-9][\w.-]*\/[\w.-]+)#(\d+)\b/g, (m, pre, r, n) => pre + ghA(`${r}#${n}`, 'issues', `${r}#${n}`));
+  if (s) text = text.replace(/(^|[\s(\[,;:])#(\d{1,6})\b/g, (m, pre, n) => {
+    const url = bareRef(+n, s);
+    return url ? `${pre}<a href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">#${n}</a>` : m;
+  });
+  return text;
 }
-const lk = t => linkify(esc(t));
+// #N in a session: a known PR with that number in the session's lane (fork or upstream), else the session's own repo
+function bareRef(n, s) {
+  const own = s.prs.map(k => S.prMap[k]).find(p => p?.number === n);
+  if (own) return own.url;
+  const inLane = S.prs.filter(p => p.lane === s.lane && p.number === n);
+  if (inLane.length === 1) return inLane[0].url;
+  return s.repo ? `https://github.com/${s.repo}/issues/${n}` : null;
+}
+const lk = (t, s) => linkify(esc(t), s);
 // Deep link into the desktop app; it resolves local_* ids among unarchived sessions.
 const claudeLink = s => s.local && !s.archived ? `<a class="pr" href="claude://code/continue?session=${encodeURIComponent(s.local)}" title="Open this session in the Claude app" onclick="event.stopPropagation()">↗ Claude</a>` : '';
 const issueChips = s => Object.keys(s.issues || {}).slice(0, 6).map(k => `<a class="pr" href="${esc(ghUrl(k, 'issues'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="issue mentioned in the session"><i style="background:var(--s3);border-radius:50%"></i>${esc(k)}</a>`).join('');
@@ -509,7 +561,7 @@ function renderEnds() {
   };
   // 1. needs you
   const needs = S2.filter(s => s.live?.status === 'waiting' || (s.summary?.needs_action && !s.archived)).sort((a, b) => (b.live?.status === 'waiting') - (a.live?.status === 'waiting') || b.last - a.last);
-  groups.push(['⚑ Needs you', needs.map(s => sessItem(s, lk(s.live?.status === 'waiting' ? 'waiting: ' + (s.live.waiting || '') : s.summary.needs_action)))]);
+  groups.push(['⚑ Needs you', needs.map(s => sessItem(s, lk(s.live?.status === 'waiting' ? 'waiting: ' + (s.live.waiting || '') : s.summary.needs_action, s)))]);
   // 2. PRs ready to land
   const ready = openPRs.filter(p => !p.draft && (p.review === 'APPROVED' || (p.ci === 'SUCCESS' && p.mergeable === 'MERGEABLE' && !p.reviewers?.length)));
   groups.push(['✓ PRs that look landable', ready.map(prItem)]);
@@ -526,7 +578,7 @@ function renderEnds() {
   });
   const dangling = S2.filter(s => !s.live && !s.archived && s.last_text && IDEA_RE.test(s.last_text.slice(-600)) && S.now - (s.last || 0) > 3600)
     .sort((a, b) => b.last - a.last).slice(0, 25)
-    .map(s => sessItem(s, '“…' + lk(s.last_text.slice(-260)) + '”'));
+    .map(s => sessItem(s, '“…' + lk(s.last_text.slice(-260), s) + '”'));
   groups.push(['💡 Ideas & offers left hanging', props.concat(dangling)]);
   // 6. open PRs with no session at all (non-draft first)
   const lonely = openPRs.filter(p => !p.sessions?.length).sort((a, b) => (a.draft - b.draft) || b.updated - a.updated);
@@ -534,37 +586,90 @@ function renderEnds() {
   groups.push(['○ Open PRs with no session', lonely.map(prItem).concat(ancient ? [`<div class="empty">${ancient} more open PRs untouched for 30+ days</div>`] : [])]);
   // 7. unarchived but dead sessions, oldest first: archive or revive
   const stale = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 5 * 86400).sort((a, b) => a.last - b.last);
-  groups.push(['🗄 Unarchived, idle > 5 days', stale.map(s => sessItem(s, lk(s.summary?.status_detail || '')))]);
+  groups.push(['🗄 Unarchived, idle > 5 days', stale.map(s => sessItem(s, lk(s.summary?.status_detail || '', s)))]);
   $('#ends').innerHTML = groups.map(([h, its]) => `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${its.slice(0, 12).join('') || '<div class="empty">none</div>'}${its.length > 12 ? `<div class="empty">+${its.length - 12} more</div>` : ''}</div>`).join('');
 }
 
 // ---------------------------------------------------------------- drawer
 let openSid = null;
-function openDrawer(sid, keepScroll) {
-  const s = S.sMap[sid]; if (!s) return;
-  openSid = sid;
-  const st = sessionState(s), d = $('#drawer');
-  const kids = S.sessions.filter(x => x.spawned_from === sid);
+function drawerMeta(s) {
+  const st = sessionState(s);
+  const kids = S.sessions.filter(x => x.spawned_from === s.sid);
   const parent = s.spawned_from && S.sMap[s.spawned_from];
-  const scroll = d.scrollTop;
-  d.innerHTML = `<button class="close" onclick="closeDrawer()">✕</button>
-    <h2>${esc(s.title)}</h2>
-    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}${claudeLink(s)}</div>
+  return `<h2>${esc(s.title)}</h2>
+    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}${claudeLink(s)}</div>
     <div class="when" style="margin-top:6px">${fmtTime(s.first)} → ${s.live ? 'now' : fmtTime(s.last)} · ${s.prompts} prompts · ${(s.out_tokens / 1000).toFixed(0)}k output tokens${s.subagents ? ' · ' + s.subagents + ' subagents' : ''}</div>
-    ${s.summary ? `<div class="k">Status</div><div>${esc(s.summary.status_category || '')}: ${lk(s.summary.status_detail || '')}${s.summary.needs_action ? `<br><b>⚑ ${lk(s.summary.needs_action)}</b>` : ''}</div>` : ''}
+    ${s.summary ? `<div class="k">Status</div><div>${esc(s.summary.status_category || '')}: ${lk(s.summary.status_detail || '', s)}${s.summary.needs_action ? `<br><b>⚑ ${lk(s.summary.needs_action, s)}</b>` : ''}</div>` : ''}
     ${s.prs.length ? `<div class="k">Pull requests</div><div style="display:flex;gap:6px;flex-wrap:wrap">${s.prs.map(prChip).join('')}</div>` : ''}
     ${Object.keys(s.issues).length ? `<div class="k">Issues mentioned</div><div style="display:flex;gap:6px;flex-wrap:wrap">${issueChips(s)}</div>` : ''}
     ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
-    ${s.load ? `<div class="k">Processes (${cores(s.load.cpu)} cores, ${gb(s.load.rss)})</div><table>${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table>` : ''}
-    ${s.last_prompt ? `<div class="k">Your last ask · ${ago(s.last_prompt_t)}</div><pre>${lk(s.last_prompt)}</pre>` : ''}
-    ${s.last_text ? `<div class="k">Agent's last words</div><pre>${lk(s.last_text)}</pre>` : ''}
+    ${s.load ? `<details><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table>${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
-    ${s.first_prompt ? `<div class="k">How it started</div><pre>${lk(s.first_prompt)}</pre>` : ''}
-    <div class="k">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</div><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre>
-    ${Object.keys(s.pr_mentions).length ? `<div class="k">PRs mentioned in transcript</div><div class="when">${Object.entries(s.pr_mentions).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${ghA(k, 'pull')} ×${n}`).join(' · ')}</div>` : ''}`;
+    <details><summary class="k" style="cursor:pointer">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</summary><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre></details>
+    ${Object.keys(s.pr_mentions).length ? `<div class="k">PRs mentioned in transcript</div><div class="when">${Object.entries(s.pr_mentions).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${ghA(k, 'pull')} ×${n}`).join(' · ')}</div>` : ''}
+    <div class="k" style="display:flex;justify-content:space-between;align-items:baseline">Thread <a href="#" class="when" style="text-transform:none" onclick="const d=$('#drawer');d.scrollTop=d.scrollHeight;return false">latest ↓</a></div>`;
+}
+
+// ---------------------------------------------------------------- thread rendering
+if (window.DOMPurify) DOMPurify.addHook('afterSanitizeAttributes', n => { if (n.tagName === 'A' && /^https?:/.test(n.getAttribute('href') || '')) { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener'); } });
+function md(text, s) {
+  if (!window.marked || !window.DOMPurify) return `<div class="md md-plain">${lk(text, s)}</div>`;
+  const box = document.createElement('div');
+  box.className = 'md';
+  box.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true }));
+  // link owner/repo#N and bare #N in prose (not inside links or code)
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest('a, code, pre') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    const e = esc(n.data), h = linkify(e, s);
+    if (h !== e) { const sp = document.createElement('span'); sp.innerHTML = h; n.replaceWith(...sp.childNodes); }
+  }
+  return box.outerHTML;
+}
+const threadCache = {};  // sid -> {key, html}
+async function loadThread(s, limit) {
+  const key = `${s.last}|${limit}`;
+  const el = $('#dthread'); if (!el) return;
+  if (threadCache[s.sid]?.key === key) { if (el.dataset.key !== key) { el.innerHTML = threadCache[s.sid].html; el.dataset.key = key; } return; }
+  let th;
+  try { const r = await fetch(`/api/thread?sid=${encodeURIComponent(s.sid)}&limit=${limit}`); th = r.ok ? await r.json() : null; } catch (e) { th = null; }
+  if (!th) { el.innerHTML = '<div class="empty">no transcript</div>'; return; }
+  const parts = [];
+  const hidden = th.total - th.items.length;
+  if (hidden > 0) {
+    if (s.first_prompt) parts.push(`<div class="msg-user"><div class="msg-meta">how it started · ${fmtTime(s.first)}</div>${md(s.first_prompt, s)}</div>`);
+    parts.push(`<div class="msg-gap"><button class="btn-link" onclick="$('#drawer').dataset.limit=${limit + 80};loadThread(S.sMap['${s.sid}'], ${limit + 80})">··· ${hidden} earlier items · show 80 more</button></div>`);
+  }
+  for (const it of th.items) {
+    if (it.role === 'user') parts.push(`<div class="msg-user"><div class="msg-meta">you · ${fmtTime(it.t)}</div>${md(it.text, s)}</div>`);
+    else if (it.role === 'assistant') parts.push(`<div class="msg-asst">${md(it.text, s)}</div>`);
+    else {
+      const names = [...new Set(it.calls.map(c => c[0]))].slice(0, 5).join(' · ');
+      const n = it.calls.length + (it.more || 0);
+      parts.push(`<details class="msg-tools"><summary>${n} tool call${n > 1 ? 's' : ''} · ${esc(names)}</summary><ol>${it.more ? `<li style="list-style:none">… ${it.more} earlier</li>` : ''}${it.calls.map(c => `<li><b>${esc(c[0])}</b> ${esc(c[1])}</li>`).join('')}</ol></details>`);
+    }
+  }
+  const html = `<div class="thread">${parts.join('')}</div>`;
+  threadCache[s.sid] = { key, html };
+  if (openSid === s.sid) { el.innerHTML = html; el.dataset.key = key; }
+}
+
+function openDrawer(sid, keepScroll) {
+  const s = S.sMap[sid]; if (!s) return;
+  const d = $('#drawer');
+  const fresh = d.dataset.sid !== sid || !keepScroll;
+  openSid = sid;
+  if (fresh) {
+    d.dataset.sid = sid;
+    d.innerHTML = `<button class="close" onclick="closeDrawer()">✕</button><div id="dmeta"></div><div id="dthread"><div class="empty">loading thread…</div></div>`;
+    d.dataset.limit = 60;
+  }
+  const scroll = d.scrollTop;
+  $('#dmeta').innerHTML = drawerMeta(s);
+  loadThread(s, +d.dataset.limit);
   d.classList.add('open');
-  if (keepScroll) d.scrollTop = scroll; else d.scrollTop = 0;
+  d.scrollTop = fresh ? 0 : scroll;
 }
 function closeDrawer() { openSid = null; $('#drawer').classList.remove('open'); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
