@@ -48,6 +48,7 @@ def main():
     shots = [  # name, hash, width, height, color scheme (0 = dark, 1 = light)
         ("overview", "", 1440, 900, 0),
         ("overview-light", "", 1440, 900, 1),
+        ("jvms", "only=sec-jvms", 1440, 560, 0),
         ("timeline", "only=sec-timeline", 1440, 1000, 0),
         ("session", f"session={sid}", 1440, 900, 0),
         ("search", "q=cache", 1440, 800, 0),

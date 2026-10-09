@@ -29,6 +29,8 @@ Cards stay put: they only reorder when a session's state or CPU tier changes mat
 
 ### JVMs
 
+<img src="docs/screenshots/jvms.webp" alt="JVMs: heap, GC, allocation and threads of every JVM, attributed to sessions">
+
 Most of the heavy lifting on a card is usually a JVM: an sbt server, Bloop, a Gradle daemon, a forked test run. The JVMs section is a `top` for all of them, read from the counters HotSpot already publishes for `jstat` (`hsperfdata`), so nothing attaches to them and they pay nothing. Each row shows the owning session, uptime, CPU, heap used against committed and max, the share of wall time in GC pauses, an estimated allocation rate, threads and loaded classes. Expand a row for the heap by generation, metaspace, safepoint and JIT time, the JVM's options, and the last three hours per minute.
 
 Session cards get a line for their JVMs, and **JVMs in trouble** in Loose ends lists any that are spending a fifth of their time in GC, stay near their max heap even after collections, or ran a full GC in the last five minutes.
