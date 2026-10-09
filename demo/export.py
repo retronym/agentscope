@@ -245,6 +245,13 @@ class Names:
         return f"/home/demo/code/{self.map_lane(lane) if lane else 'misc'}" + (f"/.worktrees/{name}" if ".worktrees" in p else "")
 
 
+JVM_LABELS = {label for _, label in A.jvm.KNOWN} - {"JetBrains Toolbox"}  # vendor names can be real GitHub owners
+
+
+def map_jvm_label(label):
+    return label if label in JVM_LABELS else rng_for("jvm", label).choice(["app server", "BenchRunner", "Indexer", "Worker"])
+
+
 def map_proc_label(label):
     if label in KEEP_PROC_LABELS:
         return label
@@ -268,8 +275,9 @@ def snapshot(days, n_items):
     for r in A.load_history(time.time() - sampler.hist.maxlen * sampler.period):
         sampler.hist.append((r["t"], {k: v for k, v in r["s"].items() if not k.startswith("@")},
                              {k[1:]: v for k, v in r["s"].items() if k.startswith("@")}))
-    sampler.sample(A.meta_cached())
-    time.sleep(3)
+    for _ in range(2):  # the first sample only primes CPU deltas, the second primes the JVMs' counter deltas
+        sampler.sample(A.meta_cached())
+        time.sleep(3)
     sampler.sample(A.meta_cached())
     print("fetching PRs from GitHub…", file=sys.stderr)
     A._gh.update(t=time.time(), prs=A.fetch_prs(), login=A.run(["gh", "api", "user", "-q", ".login"]).strip() or None)
@@ -283,6 +291,7 @@ def snapshot(days, n_items):
             threads[s["sid"]] = th["items"]
         procs[s["sid"]] = A.session_procs(s["sid"], since)
     state["sessions"] = keep
+    state["jvm_hist"] = {j["id"]: A.jvm.history(A.db, j["id"], state["now"] - 3 * 3600) for j in state["jvms"]}
     return state, A.load_history(state["now"] - 30 * 86400), threads, procs
 
 
@@ -341,6 +350,9 @@ def anonymize(state, load, threads, procs):
                         prompt=tmap(p.get("prompt"), "user"), task_id="task_" + new_id(p.get("task_id"))[:8] if p.get("task_id") else None)
                    for p in state["proposals"]],
         orphans=[dict(o, label=map_proc_label(o["label"]), args=map_proc_label(o["label"]), cwd=None) for o in state["orphans"]],
+        jvms=[dict(j, sid=sid(j["sid"]) if j.get("sid") else None, label=map_jvm_label(j["label"]), main=map_jvm_label(j["label"]), args="", vendor="")
+              for j in state["jvms"]],
+        jvm_hist=None,
         machine_hist=[[t, b, [[sid(x), c] for x, c in top]] for t, b, top in state["machine_hist"]],
     )
     out_load = [dict(t=r["t"], s={(k if k.startswith("@") else sid(k)): v for k, v in r["s"].items()}) for r in load]
@@ -363,7 +375,7 @@ def anonymize(state, load, threads, procs):
 # ---------------------------------------------------------------------------------------------
 # Time shift: hide when the work happened, keep durations, gaps and ordering
 
-TIME_KEYS = {"now", "gh_t", "first", "last", "last_prompt_t", "t", "t1", "created", "updated", "merged", "closed", "last_commit"}
+TIME_KEYS = {"now", "gh_t", "start", "first", "last", "last_prompt_t", "t", "t1", "created", "updated", "merged", "closed", "last_commit"}
 
 
 def random_shift():
@@ -465,7 +477,8 @@ def main():
     a = ap.parse_args()
     state, load, threads, procs = snapshot(a.days, a.items)
     st, ld, th, pr, N = anonymize(state, load, threads, procs)
-    obj = shift_times(dict(state=st, load=ld, threads=th, procs=pr), random_shift())
+    jh = {str(k): {"series": v} for k, v in state["jvm_hist"].items()}
+    obj = shift_times(dict(state=st, load=ld, threads=th, procs=pr, jvm_hist=jh), random_shift())
     unshifted = check_shifted(obj, state["now"])
     if unshifted:
         sys.exit(f"refusing to write: {len(unshifted)} timestamps were not shifted, e.g. {sorted(set(unshifted))[:8]}")
@@ -474,6 +487,11 @@ def main():
     if leaks:
         sys.exit(f"refusing to write: {len(leaks)} real strings survived anonymization, e.g. {leaks[:8]}")
     page = open(os.path.join(ROOT, "index.html")).read()
+    for f in A.STATIC:  # one self-contained file: inline the page's own scripts and styles
+        src = open(os.path.join(ROOT, f)).read()
+        tag = f'<script src="{f}"></script>' if f.endswith(".js") else f'<link rel="stylesheet" href="{f}">'
+        assert tag in page, tag
+        page = page.replace(tag, f"<script>\n{src}</script>" if f.endswith(".js") else f"<style>\n{src}</style>")
     inject = "<script>window.STATIC_DATA = " + data.replace("</", "<\\/") + ";</script>\n"
     page = page.replace("<title>agentscope</title>", "<title>agentscope demo</title>").replace("</head>", inject + "</head>", 1)
     os.makedirs(os.path.dirname(a.out), exist_ok=True)

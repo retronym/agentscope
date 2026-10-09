@@ -1,0 +1,28 @@
+/* JVMs: the table in #sec-jvms and the session drawer, the line on session cards */
+.jvms { overflow-x: auto; }
+table.jt { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+table.jt th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.jt td { padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; }
+table.jt tr.jr { cursor: pointer; }
+table.jt tr.jr:hover td { background: var(--surface-2); }
+table.jt tr.jr.open td { background: var(--surface-2); border-bottom-color: transparent; }
+table.jt tr.jd td { background: var(--surface-2); padding: 4px 12px 12px; white-space: normal; }
+table.jt .num { text-align: right; }
+table.jt .who { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+table.jt .sub { color: var(--muted); font-size: 11px; }
+table.jt .dim { color: var(--muted); }
+.hb { display: inline-block; position: relative; width: 90px; height: 8px; border-radius: 4px; background: var(--grid); vertical-align: middle; overflow: hidden; }
+.hb i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.hb .c { background: color-mix(in srgb, var(--s1) 30%, transparent); }
+.hb .u { background: var(--s1); }
+.hb.warn .u { background: var(--warning); }
+.hb.bad .u { background: var(--critical); }
+.jflag { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; padding: 0 6px; border-radius: 99px; border: 1px solid color-mix(in srgb, var(--critical) 50%, transparent); color: var(--critical); margin-right: 3px; }
+.jflag.warn { border-color: color-mix(in srgb, var(--warning) 60%, transparent); color: color-mix(in srgb, var(--warning) 70%, var(--ink)); }
+.jdet { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 18px; align-items: start; }
+.jdet .kv { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 12px; }
+.jdet .kv span:nth-child(odd) { color: var(--muted); }
+.jdet pre { white-space: pre-wrap; word-break: break-all; font: 11px/1.4 var(--font-mono); color: var(--ink-2); margin: 6px 0 0; max-height: 90px; overflow: auto; }
+.jdet svg text { font-size: 10.5px; fill: var(--muted); }
+.card .jline { font-size: 11.5px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) { .jdet { grid-template-columns: 1fr; } }

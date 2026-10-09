@@ -10,6 +10,7 @@ Sources (all local except GitHub):
     $CLAUDE_CONFIG_DIR if set, and any ~/.claude-* sibling holding sessions (multi-account setups that alias
     `claude` with a different CLAUDE_CONFIG_DIR).
   - ps / lsof                       process tree; CPU/RSS attributed to sessions by ancestry, else by cwd
+  - <tmp>/hsperfdata_<user>/<pid>   every JVM's GC, heap, thread and class counters, without attaching (jvm.py)
   - gh api graphql                  your PRs (open + recently closed), CI and review state
 
 Load history goes to ~/.cache/agentscope/agentscope.db (SQLite): per-minute averages per session and per machine
@@ -21,6 +22,8 @@ Usage: python3 agentscope.py [--port 8377]   then open http://localhost:8377
 import argparse, collections, glob, json, os, re, sqlite3, subprocess, threading, time, traceback
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
+
+import jvm
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
@@ -520,6 +523,7 @@ def db(readonly=False):
 def db_init():
     with db() as c:
         c.executescript(SCHEMA)
+        c.executescript(jvm.SCHEMA)
         # one-off import of the JSONL history written by earlier versions
         for f in sorted(glob.glob(os.path.join(CACHE, "load-*.jsonl"))):
             rows_s, rows_b = [], []
@@ -543,6 +547,7 @@ def db_prune():
         c.execute("DELETE FROM proc WHERE last_t < ?", (now - PROC_RETENTION_DAYS * 86400,))
         c.execute("DELETE FROM session_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
         c.execute("DELETE FROM bucket_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
+        jvm.prune(c, now)
 
 
 SYSTEM_HINTS = ("/System/", "/usr/libexec", "/usr/sbin", "/sbin/", "/Library/SystemExtensions", "/Library/Apple/") + \
@@ -565,6 +570,7 @@ class Sampler:
         self.proc_ids = {}  # (pid, args) -> proc.id; a pid reused for a different command line is a new process
         self._cwd_cache = {}  # pid -> cwd (pids are not reused quickly enough to matter here)
         self.sticky = {}  # pid -> (sid, how): a daemonized child keeps the session it was first seen under
+        self.jvms = jvm.JvmTracker(db)
 
     def attribute(self, procs, live, meta_by_cli, mentions):
         claude_pids = {pid: j for pid, j in live.items() if pid in procs}
@@ -586,8 +592,9 @@ class Sampler:
         for pid in procs:
             find_owner(pid)
 
-        # cwd fallback for heavy unowned processes (detached sbt servers, nohup'd builds...)
-        cands = [p for p in procs.values() if owner.get(p["pid"]) is None and p["rss"] > 150e6
+        # cwd fallback for heavy unowned processes and any JVM (detached sbt servers, nohup'd builds...)
+        jvm_pids = self.jvms.pids()
+        cands = [p for p in procs.values() if owner.get(p["pid"]) is None and (p["rss"] > 150e6 or p["pid"] in jvm_pids)
                  and not any(h in p["args"] for h in SYSTEM_HINTS) and not p["args"].startswith("/Applications/")]
         need = [p["pid"] for p in cands if p["pid"] not in self._cwd_cache]
         self._cwd_cache.update(batch_cwds(need))
@@ -637,11 +644,12 @@ class Sampler:
         sess = {}
         buckets = collections.defaultdict(lambda: dict(cpu=0.0, rss=0))
         orphans = []
-        newprev = {}
+        newprev, cpu_of = {}, {}
         for pid, p in procs.items():
             pc, pt = self.prev.get(pid, (None, None))
             cpu = max(0.0, (p["cpu_s"] - pc) / (now - pt) * 100) if pc is not None and now > pt else 0.0
             newprev[pid] = (p["cpu_s"], now)
+            cpu_of[pid] = cpu
             o = owner.get(pid)
             if o:
                 s = sess.setdefault(o[0], dict(cpu=0.0, rss=0, procs=[]))
@@ -678,6 +686,10 @@ class Sampler:
             self.hist.append((now, {k: [round(v["cpu"], 1), v["rss"]] for k, v in sess.items()},
                               {k: [round(v["cpu"], 1), v["rss"]] for k, v in buckets.items()}))
         self._persist(now, sess, buckets, orphans)
+        try:
+            self.jvms.sample(now, procs, cpu_of, owner)
+        except Exception:
+            traceback.print_exc()
 
     def _persist(self, now, sess, buckets, orphans):
         minute = int(now // 60)
@@ -975,7 +987,7 @@ def build_state(sampler):
     for s in sessions:
         for p in s["proposals"]:
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
-    return dict(now=time.time(), ncpu=NCPU, claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=os.path.getmtime(os.path.join(HERE, "index.html")), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+    return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -994,6 +1006,8 @@ def _memsize():
 
 # ---------------------------------------------------------------------------------------------
 # HTTP
+
+STATIC = ("static/jvm.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
@@ -1052,6 +1066,10 @@ def serve(port):
                     self._send(200, json.dumps(session_procs(q.get("sid", ""), float(q.get("since", 0)))), "application/json")
                 elif path == "/api/top":
                     self._send(200, json.dumps(top_procs(float(q.get("t0", 0)), float(q.get("t1", time.time())), int(q.get("limit", 15)))), "application/json")
+                elif path.startswith("/static/") and path[1:] in STATIC:
+                    self._send(200, open(os.path.join(HERE, path[1:])).read(), ("text/css" if path.endswith(".css") else "text/javascript") + "; charset=utf-8")
+                elif path == "/api/jvm":
+                    self._send(200, json.dumps(jvm.history(db, int(q.get("id", 0)), float(q.get("since", time.time() - 3 * 3600)))), "application/json")
                 elif path == "/api/load":
                     self._send(200, json.dumps(load_history(float(q.get("since", time.time() - 86400)))), "application/json")
                 else:
@@ -1060,14 +1078,19 @@ def serve(port):
                 self._send(500, traceback.format_exc(), "text/plain")
 
     print(f"agentscope on http://localhost:{port}  (reading {', '.join(CLAUDE_DIRS) or 'no Claude config dirs found'})")
+    print(f"JVMs from {', '.join(sampler.jvms.dirs) or 'nowhere: no hsperfdata directory found'}")
     ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8377)
+    ap.add_argument("--db", metavar="FILE", help=f"history database (default {DB_FILE}); a scratch one keeps a dev server off your real history")
     ap.add_argument("--claude-dir", action="append", metavar="DIR",
                     help="a Claude Code config dir to read (repeatable); default: ~/.claude, $CLAUDE_CONFIG_DIR, and ~/.claude-* siblings")
     a = ap.parse_args()
     configure_claude_dirs(a.claude_dir)
+    if a.db:
+        DB_FILE = os.path.abspath(a.db)
+        os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     serve(a.port)

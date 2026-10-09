@@ -27,6 +27,14 @@ Live sessions first: waiting on you, then working, then recently active. Each ca
 
 Cards stay put: they only reorder when a session's state or CPU tier changes materially, and moves are animated. Status chips (*waiting for you*, *active*, *working*, *GitHub*) filter every view.
 
+### JVMs
+
+Most of the heavy lifting on a card is usually a JVM: an sbt server, Bloop, a Gradle daemon, a forked test run. The JVMs section is a `top` for all of them, read from the counters HotSpot already publishes for `jstat` (`hsperfdata`), so nothing attaches to them and they pay nothing. Each row shows the owning session, uptime, CPU, heap used against committed and max, the share of wall time in GC pauses, an estimated allocation rate, threads and loaded classes. Expand a row for the heap by generation, metaspace, safepoint and JIT time, the JVM's options, and the last three hours per minute.
+
+Session cards get a line for their JVMs, and **JVMs in trouble** in Loose ends lists any that are spending a fifth of their time in GC, stay near their max heap even after collections, or ran a full GC in the last five minutes.
+
+Profiling (opt-in JFR recording, flame graphs, thread timelines) is designed in [docs/jvm-profiler.md](docs/jvm-profiler.md) and not built yet.
+
 ### Timeline
 
 <img src="docs/screenshots/timeline.webp" alt="Timeline: one lane per repository, sessions as activity bars, PR markers, CPU heat">
@@ -80,6 +88,7 @@ Everything is local and read-only except the GitHub query:
 | `~/.claude/sessions/*.json` (and every other config dir) | live PID → session, busy / idle / waiting |
 | `~/.claude/projects/**/*.jsonl` (likewise) | transcripts: activity, prompts, messages, proposals, token counts |
 | `ps`, `lsof` | the process tree, cputime, memory, working directories |
+| `hsperfdata_<user>/<pid>` in the temp dir | every JVM's GC, heap, safepoint, thread, class and JIT counters, without attaching |
 | `gh api graphql` | your open PRs and those closed in the last 45 days: CI, reviews, mergeability |
 
 agentscope is a plain script. It makes no model calls, and nothing leaves your machine except the GitHub query and the two pinned markdown libraries the page loads from cdnjs.
@@ -90,6 +99,7 @@ History lives in SQLite at `~/.cache/agentscope/agentscope.db`, one row per minu
 
 - `session_minute`, `bucket_minute`: CPU and memory per session and per machine group. Kept a year.
 - `proc`, `proc_minute`: every process that used ≥ 0.5% CPU or ≥ 50 MB in a minute, with its command line, working directory, owning session and how it was attributed. Kept 30 days.
+- `jvm`, `jvm_minute`: every JVM seen, with its session, version, collector and options, and its counters per minute. Kept 30 days.
 - `msg_fts`: the full-text index over prompts and agent messages.
 
 Anything else is a SQL query away, for example CPU-hours per session today:
@@ -107,7 +117,7 @@ git clone https://github.com/retronym/agentscope && cd agentscope
 python3 agentscope.py        # or: mise run serve
 ```
 
-Then open http://localhost:8377. Load history accumulates while the server runs, so leave it running.
+Then open http://localhost:8377. To try changes without touching your history, run a second copy on a scratch database: `python3 agentscope.py --port 8378 --db dist/dev.db`. Load history accumulates while the server runs, so leave it running.
 
 **Several Claude accounts?** If you run `claude` with different `CLAUDE_CONFIG_DIR`s (e.g. `alias claude-work='env CLAUDE_CONFIG_DIR=$HOME/.claude-work claude'`), agentscope reads `~/.claude`, `$CLAUDE_CONFIG_DIR` and every `~/.claude-*` directory that holds sessions, and tags each session with the one it came from. To choose explicitly, pass `--claude-dir` once per directory, or set `AGENTSCOPE_CLAUDE_DIRS` (colon-separated). The startup line lists the directories in use.
 

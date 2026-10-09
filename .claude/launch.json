@@ -1,6 +1,8 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "agentscope", "runtimeExecutable": "python3", "runtimeArgs": ["-u", "agentscope.py"], "port": 8377 }
+    {"name": "agentscope", "runtimeExecutable": "python3", "runtimeArgs": ["-u", "agentscope.py"], "port": 8377},
+    {"name": "agentscope-dev", "runtimeExecutable": "python3", "runtimeArgs": ["-u", "agentscope.py", "--port", "8378", "--db", "dist/dev.db"], "port": 8378},
+    {"name": "demo", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8381", "--bind", "127.0.0.1", "--directory", "dist"], "port": 8381}
   ]
 }

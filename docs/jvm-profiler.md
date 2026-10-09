@@ -1,6 +1,6 @@
 # Design: a built-in JVM profiler
 
-Status: proposal, for review. Nothing implemented yet.
+Status: phase 1 (JVM top) is done; the rest is a proposal.
 
 ## Problem
 
@@ -105,8 +105,8 @@ Rules are data (a table in the code to begin with), and unmatched stacks fall ba
 
 The JFR repository *is* the raw store for the recent window; we don't copy samples. SQLite gets what's needed beyond it, pruned like the existing tables:
 
-- `jvm`: pid, start time, session, label, JDK version, main class, flags. Kept a year.
-- `jvm_minute`: tier-0 counters per minute (heap per generation, GC time and count, safepoint time, threads, classes, alloc rate). Kept a year.
+- `jvm`: pid, start time, session, label, JDK version, collector, main class, options. Kept 30 days.
+- `jvm_minute`: tier-0 counters per minute (CPU, RSS, heap used / committed / max, GC and safepoint %, alloc rate, threads, classes, young and full GCs). Kept 30 days like `proc_minute`: a year of per-minute rows for every idle IDE and daemon isn't worth the space.
 - `stack` / `frame`: interned stacks, frames as strings.
 - `sample_minute`: (jvm, minute, thread group, activity, stack, event) → count. Kept 7 days, so flame graphs for older ranges are minute-resolution.
 - `heat_second`: per JVM per second, a small blob of sub-second sample counts. Kept 24 h.
@@ -121,7 +121,7 @@ Flame graph and heatmap are hand-written canvas components (in `static/jvm.js`, 
 
 - **Record button** in the header, beside the status chips: idle, or pulsing red with elapsed time and the number of JVMs being recorded. Dropdown for scope (agent JVMs / all JVMs).
 - **Session cards** get a JVM line: label, heap bar against max, GC %, and the activity summary. Red when GC % or heap headroom says it's in trouble.
-- **JVMs tab (all JVMs).** A `top`-style table: pid, label, session, uptime, CPU, heap used / max, GC %, alloc rate, safepoint %, threads, recording state, with sparklines. Below it, the machine-wide flame graph rooted at sessions, for the selected time range.
+- **JVMs section (all JVMs).** A `top`-style table: pid, label, session, uptime, CPU, heap used / max, GC %, alloc rate, safepoint %, threads, recording state, with sparklines. Below it, the machine-wide flame graph rooted at sessions, for the selected time range.
 - **JVM panel (one JVM).**
   - Time series: CPU, heap by generation with GC pauses as ticks, alloc rate.
   - Thread lanes: one row per thread (grouped), coloured by state (on-CPU, runnable, blocked, waiting/parked, native), labelled with activity. Sorted by CPU. This is the "live task view".
@@ -134,7 +134,11 @@ Flame graph and heatmap are hand-written canvas components (in `static/jvm.js`, 
 
 Each phase is usable on its own.
 
-- **TODO 1. JVM top (tier 0).** hsperfdata reader in the sampler; `jvm`, `jvm_minute`; JVMs tab table; JVM line on session cards; health flags. No attach.
+- **DONE 1. JVM top (tier 0).** `jvm.py`: hsperfdata reader, JVM tracker in the sampler, `jvm`/`jvm_minute`, `/api/jvm`. `static/jvm.{js,css}`: the JVMs section with expandable rows and a 3 h chart, the line on session cards, the drawer section, **JVMs in trouble** in Loose ends. JVMs are now always considered for cwd attribution, however small. The demo export anonymizes and inlines it all. Learned along the way:
+  - The user dir must come from `getpwuid`, as HotSpot does; `$USER` can be unset (it was under the preview server).
+  - Counter sets differ: JDK 25+ JBR lacks `sun.os.hrt.ticks`; ZGC has no eden; G1 and ZGC report the whole heap as each generation's max, so max heap is `-Xmx`, else one generation's max, else the sum.
+  - Allocation is estimated from eden turnover, assuming eden is full at each GC; it's suppressed while GC takes over half the time, where that assumption breaks (a Serial-GC thrash test read 2.8 GB/s).
+  - A deliberately thrashing test JVM (`-Xmx32m`, 25 MB live) tripped all three flags within a minute and was attributed to its session via the scratchpad.
 - **TODO 2. Helper and snapshots.** The `profiler/` Maven project, the JSON-lines protocol, attach via the Attach API; thread dump (rendered and grouped, deadlocks highlighted), heap info. On demand only.
 - **TODO 3. Continuous JFR (tier 1).** `agentscope.jfc` and its measured overhead; the **Record** button and per-JVM toggle; the Java helper tailing repositories; thread lanes and per-thread CPU; flame graph and heatmap for a range in the JVM panel.
 - **TODO 4. Across JVMs.** Aggregates into SQLite; session-rooted machine-wide flame graph; activity classifier and the card summary.

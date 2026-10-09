@@ -196,6 +196,8 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<link rel="stylesheet" href="static/jvm.css">
+<script src="static/jvm.js"></script>
 </head>
 <body>
 <div id="demo-banner" class="demo-banner" hidden>
@@ -227,6 +229,10 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
     <div style="height:10px"></div>
     <div class="cards" id="cards"></div>
     <div id="orphans"></div>
+  </section>
+  <section id="sec-jvms">
+    <h2>JVMs <span class="sub" id="jvm-sub"></span></h2>
+    <div class="panel jvms" id="jvms"></div>
   </section>
   <section id="sec-timeline">
     <h2>Timeline <span class="sub">one lane per repo · bar = agent activity, ● = your prompt, ◇ PR opened, ◆ merged/closed (color = PR state), dashed = spawned-from · lane background = attributed CPU (darker = more cores)</span></h2>
@@ -266,6 +272,7 @@ function staticApi(url) {
     case '/api/state': return D.state;
     case '/api/load': return D.load.filter(r => r.t >= +q.since);
     case '/api/procs': return D.procs[q.sid] || [];
+    case '/api/jvm': return (D.jvm_hist?.[q.id]?.series || []).filter(r => r[0] >= +q.since);
     case '/api/thread': {
       const items = D.threads[q.sid]; if (!items) return null;
       let limit = +q.limit || 60;
@@ -406,7 +413,7 @@ function render() {
     (S.gh_t ? 'GitHub ' + ago(S.gh_t) : 'GitHub loading…') + (S.index_ready ? '' : ' · indexing transcripts…');
   renderChips(); renderCrumbs();
   document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
-  renderMachine(); renderCards(); renderTimeline(); renderEnds();
+  renderMachine(); renderCards(); renderJvms(); renderTimeline(); renderEnds();
   if (openSid && S.sMap[openSid]) openDrawer(openSid, true);
 }
 
@@ -506,6 +513,7 @@ function renderCards() {
       ${sum ? `<div class="sum">${lk(sum, s)}</div>` : ''}
       ${need ? `<div class="sum" style="color:var(--ink)"><b>⚑ needs you:</b> ${lk(need, s)}</div>` : ''}
       ${s.load ? `<div class="load">${spark(s)}<span>${cores(s.load.cpu)} cores</span><span>${gb(s.load.rss)}</span></div>${procs ? `<div class="meta">${procs}</div>` : ''}` : ''}
+      ${jvmLine(s)}
       ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}
     </div>`;
   }).join('') || '<div class="empty">nothing live</div>';
@@ -738,6 +746,7 @@ function renderEnds() {
   groups.push(['✓ PRs that look landable', ready.map(prItem)]);
   // 3. PRs in trouble
   groups.push(['✕ PRs in trouble', openPRs.filter(p => ['FAILURE', 'ERROR'].includes(p.ci) || p.review === 'CHANGES_REQUESTED' || p.mergeable === 'CONFLICTING').sort((a, b) => b.updated - a.updated).map(prItem)]);
+  groups.push(jvmEndsGroup());
   // 4. quiet sessions that own open PRs
   const quiet = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 2 * 86400 && s.prs.some(k => S.prMap[k]?.state === 'OPEN'))
     .sort((a, b) => b.last - a.last);
@@ -776,6 +785,7 @@ function drawerMeta(s) {
     ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
     ${s.load ? `<details data-k="procs"><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table class="pt">${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
+    ${jvmDrawer(s)}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
     <details id="phist" data-k="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>
     <details data-k="resume"><summary class="k" style="cursor:pointer">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</summary><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre></details>
