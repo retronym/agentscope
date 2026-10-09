@@ -838,14 +838,18 @@ function openDrawer(sid, keepScroll) {
     dx = 0;
     if (close) closeDrawer();
   };
-  d.addEventListener('wheel', e => {
-    if (!d.classList.contains('open') || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
-    if (canScrollX(e.target, -e.deltaX)) return;
+  // Listen on window: the panel slides out from under a stationary pointer, after which wheel events target the
+  // page behind it. A swipe that started on the panel keeps owning the wheel until it settles.
+  window.addEventListener('wheel', e => {
+    const active = settle !== null;
+    if (!active && !d.contains(e.target)) return;
+    if (!d.classList.contains('open')) return;
+    if (!active && (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || canScrollX(e.target, -e.deltaX))) return;
     e.preventDefault();  // also keeps the browser's back/forward swipe from firing
     dx -= e.deltaX;      // fingers moving right report negative deltaX
     follow();
     clearTimeout(settle);
-    settle = setTimeout(finish, 140);
+    settle = setTimeout(() => { settle = null; finish(); }, 140);
   }, { passive: false });
   let start = null;
   d.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') start = { x: e.clientX, y: e.clientY }; });
