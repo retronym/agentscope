@@ -42,7 +42,9 @@ When you want more than counters, an expanded row can take a snapshot, which doe
 
 **Record** in the header turns on continuous profiling: every JVM in scope (agent JVMs, or all of yours) gets a low-overhead JFR recording, picked up as it starts, and the button pulses until you stop it. A JVM's full view (⤢) then shows a sub-second CPU heatmap, one lane per thread coloured by what it's doing (on CPU, in native code, parked, blocked on a lock), and a flame graph of CPU, native, allocation, lock or park time. Drag across the heatmap or lanes to pick a range, click a thread's name to see only that thread, click a frame to zoom. You can also record a single JVM from its full view. Recordings stop when you press Stop or quit agentscope. How much they cost is measured, not guessed: on a javac workload, CPU per compile was the same with and without the recording, within noise (`mise run bench-overhead`). The first recording in a JVM costs a moment of JFR start-up.
 
-The design and what's next (profiles across JVMs, async-profiler captures) are in [docs/jvm-profiler.md](docs/jvm-profiler.md).
+While recording, each JVM's row and its session's card say what it's doing (for example *scalac: typer 62% · zinc 20%*), from rules that name compiler phases, test frameworks, dependency resolution and build tools. Every minute of every recording is also kept for a week, losslessly, so **Across JVMs** below the table shows one flame graph over all of them for the last 15 minutes to 7 days, rooted at session, then JVM, then activity, even for JVMs that have since exited.
+
+The design and what's next (async-profiler captures) are in [docs/jvm-profiler.md](docs/jvm-profiler.md).
 
 ### Timeline
 
@@ -109,6 +111,7 @@ History lives in SQLite at `~/.cache/agentscope/agentscope.db`, one row per minu
 - `session_minute`, `bucket_minute`: CPU and memory per session and per machine group. Kept a year.
 - `proc`, `proc_minute`: every process that used ≥ 0.5% CPU or ≥ 50 MB in a minute, with its command line, working directory, owning session and how it was attributed. Kept 30 days.
 - `jvm`, `jvm_minute`: every JVM seen, with its session, version, collector and options, and its counters per minute. Kept 30 days.
+- `frame`, `node`, `tgroup`, `sample_blob`: recorded profiles, as constant pools (frames, stacks as a prefix tree, thread groups) and a compressed blob per JVM, minute and kind. Kept 7 days.
 - `msg_fts`: the full-text index over prompts and agent messages.
 
 Anything else is a SQL query away, for example CPU-hours per session today:

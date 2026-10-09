@@ -24,6 +24,9 @@ import java.util.concurrent.Executors;
  * {"id": 4, "op": "record_start", "pid": 123}                     → {"id": 4, "recording": {...}}   (also record_stop, recordings)
  * {"id": 5, "op": "summary", "pid": 123, "since": ms, "bins": 300} → {"id": 5, "summary": {...}}   thread lanes, heatmap, GC
  * {"id": 6, "op": "flame", "pid": 123, "t0": ms, "t1": ms, "kind": "cpu", "threads": [ids], "reverse": false} → {"id": 6, "flame": {...}}
+ * {"id": 7, "op": "activities", "pid": 123, "since": ms}    → {"id": 7, "activities": [{activity, samples, threads}]}
+ * {"id": 8, "op": "minute", "pid": 123, "t0": ms, "t1": ms}  → {"id": 8, "minute": {groups, rows}}   exact, for storage
+ * {"id": 9, "op": "stacks", "pid": 123, "ids": [stack ids]}   → {"id": 9, "stacks": {frames, stacks}}  definitions
  * anything failing                                       → {"id": n, "error": "..."}
  * </pre>
  */
@@ -73,6 +76,13 @@ public final class Main {
         case "record_start" -> resp.put("recording", recordings.start(pid(req)));
         case "record_stop" -> resp.put("recording", recordings.stop(pid(req)));
         case "recordings" -> resp.put("recordings", recordings.list());
+        case "activities" -> resp.put("activities", recordings.profile(pid(req)).activities(num(req, "since", 0)));
+        case "minute" -> resp.put("minute", recordings.profile(pid(req)).minute(num(req, "t0", 0), num(req, "t1", Long.MAX_VALUE)));
+        case "stacks" -> {
+          List<Integer> ids = new ArrayList<>();
+          if (req.get("ids") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) ids.add(n.intValue());
+          resp.put("stacks", recordings.profile(pid(req)).stacks(ids));
+        }
         case "summary" -> resp.put("summary", recordings.profile(pid(req)).summary(num(req, "since", 0), (int) num(req, "bins", 300)));
         case "flame" -> {
           List<Long> threads = new ArrayList<>();

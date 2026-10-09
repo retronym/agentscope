@@ -39,6 +39,20 @@ class RecordingsTest {
       assertFalse(leaves.stream().anyMatch(k -> k.get(0).equals("java.lang.Thread.run")), leaves.toString());
       assertEquals(rev.get(1), ((List<Object>) flame.get("root")).get(1), "same total either way");
 
+      // the fixture's busy thread is in agentscope.profiler code: no rule names it, so it's named after its package
+      List<Map<String, Object>> acts = p.activities(t0);
+      assertEquals("agentscope.profiler.Fixture", acts.getFirst().get("activity"), acts.toString());
+
+      // for storage: exact weights per stack, and stack definitions on request
+      Map<String, Object> minute = p.minute(t0, Long.MAX_VALUE);
+      List<List<Object>> rows = (List<List<Object>>) minute.get("rows");
+      long cpuTotal = rows.stream().filter(r -> r.get(0).equals("cpu")).mapToLong(r -> ((Number) r.get(3)).longValue()).sum();
+      assertEquals((long) p.flame(t0, Long.MAX_VALUE, "cpu", List.of(), 0.002, false).get("total"), cpuTotal);
+      List<Integer> ids = rows.stream().map(r -> (Integer) r.get(2)).filter(i -> i >= 0).distinct().toList();
+      Map<String, Object> defs = p.stacks(ids);
+      assertEquals(ids.size(), ((List<?>) defs.get("stacks")).size());
+
+
       // a second start adopts the running recording rather than starting another
       Recordings again = new Recordings();
       assertEquals(true, again.start(f.pid()).get("adopted"));

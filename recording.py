@@ -7,6 +7,8 @@ next start.
 """
 import json, os, queue, re, threading, time, traceback
 
+import profiles
+
 MIN_UPTIME = 5  # seconds before a new JVM is worth attaching to
 MIN_JDK = 14  # live streaming from a repository needs JDK 14+ on the recording side
 
@@ -17,8 +19,9 @@ def jdk_major(version):
 
 
 class Recorder:
-    def __init__(self, tracker, helper, state_file):
-        self.tracker, self.helper, self.state_file = tracker, helper, state_file
+    def __init__(self, tracker, helper, state_file, db=None):
+        self.tracker, self.helper, self.state_file, self.db = tracker, helper, state_file, db
+        self.stored = dict(t=0, first=None)  # earliest stored minute, refreshed now and then
         self.lock = threading.Lock()
         self.on, self.scope, self.since = False, "agents", None
         self.manual = {}  # jvm id -> True / False: the user's choice for that JVM, over the global switch
@@ -27,6 +30,7 @@ class Recorder:
         self.queued = set()  # (op, jvm id) waiting for the worker, so ticks don't pile up duplicates
         helper.keepalive = lambda: any(r["live"] for r in self.recs.values())
         threading.Thread(target=self._worker, daemon=True).start()
+        threading.Thread(target=self._poll, daemon=True).start()
         self._stop_leftovers()
 
     # -------------------------------------------------------------- controls (from HTTP handlers)
@@ -75,7 +79,7 @@ class Recorder:
                     self._queue("stop", j["id"], j["pid"])
             for jid, r in self.recs.items():
                 if jid not in alive and r["live"]:
-                    r["live"] = False  # the JVM exited; its profile stays browsable in the helper
+                    r.update(live=False, ended=now)  # the JVM exited; its profile stays browsable in the helper
         self._save()
 
     def _queue(self, op, jid, pid):
@@ -96,7 +100,7 @@ class Recorder:
                     self.helper.call("record_stop", timeout=60, pid=pid)
                     with self.lock:
                         if jid in self.recs:
-                            self.recs[jid]["live"] = False
+                            self.recs[jid].update(live=False, ended=time.time())
             except Exception as e:
                 with self.lock:
                     r = self.recs.setdefault(jid, dict(pid=pid, since=None, live=False))
@@ -105,6 +109,50 @@ class Recorder:
                 with self.lock:
                     self.queued.discard((op, jid))
                 self._save()
+
+    # -------------------------------------------------------------- what recorded JVMs are doing, and storing it
+
+    def _poll(self, period=5):
+        while True:
+            time.sleep(period)
+            try:
+                self._activities()
+                self._store_minutes()
+                self.stored_first()
+            except Exception:
+                traceback.print_exc()
+
+    def _activities(self, window=30):
+        with self.lock:
+            live = [(jid, r["pid"]) for jid, r in self.recs.items() if r["live"] and r.get("gen") == self.helper.gen]
+        for jid, pid in live:
+            acts = self.helper.call("activities", pid=pid, since=int((time.time() - window) * 1000))["activities"]
+            total = sum(a["samples"] for a in acts) or 1
+            with self.lock:
+                if jid in self.recs:
+                    self.recs[jid]["activities"] = [[a["activity"], round(a["samples"] / total * 100), a["threads"]] for a in acts[:4]]
+
+    def _store_minutes(self):
+        """Every complete minute of every recording (live, or ended in the last couple of minutes) goes to SQLite once."""
+        if not self.db:
+            return
+        now = time.time()
+        this_minute = int(now // 60) * 60
+        with self.lock:
+            todo = [(jid, dict(r)) for jid, r in self.recs.items() if r.get("gen") == self.helper.gen and r.get("since")
+                    and (r["live"] or now - r.get("ended", 0) < 120)]
+        for jid, r in todo:
+            start = r.get("stored_to") or int(r["since"] // 60) * 60
+            for t in range(max(start, this_minute - 1800), this_minute, 60):
+                profiles.store_minute(self.db, self.helper, r["gen"], r["pid"], jid, t)
+                with self.lock:
+                    self.recs[jid]["stored_to"] = t + 60
+
+    def stored_first(self):
+        if self.db and time.time() - self.stored["t"] > 60:
+            with self.db() as c:
+                self.stored.update(t=time.time(), first=c.execute("SELECT MIN(t) FROM sample_blob").fetchone()[0])
+        return self.stored["first"]
 
     # -------------------------------------------------------------- shutdown and leftovers
 
@@ -145,7 +193,8 @@ class Recorder:
     def state(self, now):
         with self.lock:
             return dict(on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items()},
-                        jvms={str(k): dict(since=r.get("since"), live=r["live"], error=r.get("error")) for k, r in self.recs.items()})
+                        jvms={str(k): dict(since=r.get("since"), live=r["live"], error=r.get("error"), activities=r.get("activities") if r["live"] else None)
+                              for k, r in self.recs.items()}, stored_since=self.stored["first"])
 
     def pid_of(self, jvm_id):
         with self.lock:

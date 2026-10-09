@@ -54,7 +54,11 @@ function profileSection(j) {
     <div class="profc"><canvas id="heat-${j.id}"></canvas><canvas id="lanes-${j.id}"></canvas>
       <div class="flameh" id="flameh-${j.id}"></div><canvas id="flame-${j.id}"></canvas></div>`;
 }
-function setProf(id, patch_) { Object.assign(prof[id], patch_); renderJvmBox(); loadProfile(id, true); }
+const qid = id => typeof id === 'string' ? `'${id}'` : id;
+function setProf(id, patch_) {
+  Object.assign(prof[id], patch_);
+  if (id === 'all') { renderAllFlame(); loadAllFlame(true); } else { renderJvmBox(); loadProfile(id, true); }
+}
 
 // Called on every render of the full view: refetch at most every few seconds, flame when the question changed.
 async function loadProfile(id, force) {
@@ -180,9 +184,9 @@ function drawFlame(id) {
   const path = [root[0]];
   for (const name of p.zoom) { const k = root[2].find(c => c[0] === name); if (!k) { p.zoom = []; root = f.root; break; } root = k; path.push(name); }
   patch(head, `<b>Flame graph</b>
-    <span class="seg" title="Callers first (top-down), or where the time is spent first and then who called it (reversed, bottom-up)">${[[false, '↓ top-down'], [true, '↑ reversed']].map(([r, l]) => `<button class="${!!p.reverse === r ? 'on' : ''}" onclick="setProf(${id}, {reverse: ${r}, zoom: []})">${l}</button>`).join('')}</span>
-    <span class="sub">${esc(PKINDS.find(k => k[0] === p.kind)[1])} · ${p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${id},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
-    ${p.zoom.length ? `<a href="#" class="sub" onclick="setProf(${id},{zoom:[]});return false">↺ reset zoom</a> <span class="sub">${p.zoom.map(z => esc(shortName(z))).join(' › ')}</span>` : ''}`);
+    <span class="seg" title="Callers first (top-down), or where the time is spent first and then who called it (reversed, bottom-up)">${[[false, '↓ top-down'], [true, '↑ reversed']].map(([r, l]) => `<button class="${!!p.reverse === r ? 'on' : ''}" onclick="setProf(${qid(id)}, {reverse: ${r}, zoom: []})">${l}</button>`).join('')}</span>
+    <span class="sub">${esc(PKINDS.find(k => k[0] === p.kind)[1])} · ${id === 'all' ? esc(ALL_RANGES.find(r => r[0] === p.range)[1]) + ', per minute, every recorded JVM' : p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${qid(id)},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
+    ${p.zoom.length ? `<a href="#" class="sub" onclick="setProf(${qid(id)},{zoom:[]});return false">↺ reset zoom</a> <span class="sub">${p.zoom.map(z => esc(shortName(z))).join(' › ')}</span>` : ''}`);
   const rows = [];  // [depth, x, w, node]
   const lay = (n, d, x, w) => { rows.push([d, x, w, n]); let cx = x; for (const k of n[2]) { const kw = w * k[1] / n[1]; if (kw >= 0.0008) lay(k, d + 1, cx, kw); cx += kw; } };
   if (root[1]) lay(root, 0, 0, 1);
@@ -193,8 +197,8 @@ function drawFlame(id) {
   for (const [d, x, fw, n] of rows) {
     const px = x * w, pw = fw * w, y = d * FLAME_ROW;
     if (pw < 0.5) continue;
-    g.fillStyle = frameColor(n[0], dark); g.fillRect(px, y, Math.max(0.5, pw - 0.5), FLAME_ROW - 1);
-    if (pw > 30) { g.fillStyle = '#1b1b1a'; g.fillText(fit(g, d === 0 ? (p.zoom.length ? shortName(n[0]) : 'all') : shortName(n[0]), pw - 6), px + 3, y + FLAME_ROW / 2); }
+    g.fillStyle = n[3] || d === 0 ? (dark ? '#8a877e' : '#d9d6cb') : frameColor(n[0], dark); g.fillRect(px, y, Math.max(0.5, pw - 0.5), FLAME_ROW - 1);  // n[3]: a label level (session, JVM, activity)
+    if (pw > 30) { g.fillStyle = '#1b1b1a'; g.fillText(fit(g, d === 0 ? (p.zoom.length ? shortName(n[0]) : 'all') : n[3] ? n[0] : shortName(n[0]), pw - 6), px + 3, y + FLAME_ROW / 2); }
   }
   const hit = e => { const b = c.getBoundingClientRect(), x = (e.clientX - b.left) / w, d = Math.floor((e.clientY - b.top) / FLAME_ROW); return rows.find(r => r[0] === d && x >= r[1] && x < r[1] + r[2]); };
   c.onmousemove = e => { const h = hit(e); if (!h) return hideTip(); tip(e, `<div class="tt" style="word-break:break-all">${esc(h[3][0])}</div><div class="tm">${esc(unit(p.kind, h[3][1]))} · ${(h[3][1] / f.total * 100).toFixed(1)}% of all</div>`); };
@@ -212,7 +216,38 @@ const shortName = n => n.replace(/^([a-z_$][\w$]*\.)+(?=[A-Z_$][\w$]*[.$])/, m =
 function frameColor(name, dark) {
   let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
   const v = Math.abs(h) % 20;
-  if (name.endsWith('[native]')) return `hsl(${150 + v}, 45%, ${dark ? 62 : 70}%)`;
+  // non-Java frames (JFR's [Native]; async-profiler's C++, kernel, stubs) are whatever doesn't look like package.Class.method
+  if (/ \[[^\]]+\]$/.test(name) || !/^[\w$]+(\.[\w$<>]+)+$/.test(name)) return `hsl(${150 + v}, 45%, ${dark ? 62 : 70}%)`;
   if (/^(java|javax|jdk|sun|com\.sun)\./.test(name)) return `hsl(${200 + v}, 35%, ${dark ? 66 : 76}%)`;
   return `hsl(${18 + v * 1.6}, 80%, ${dark ? 62 : 66}%)`;
+}
+
+// ---------------------------------------------------------------- across JVMs: stored minutes, session → JVM → activity → frames
+const ALL_RANGES = [[900, 'last 15 min'], [3600, 'last hour'], [6 * 3600, 'last 6 h'], [86400, 'last 24 h'], [7 * 86400, 'last 7 days']];
+prof.all = { kind: 'cpu', range: 3600, zoom: [] };
+function renderAllFlame() {
+  const el = $('#jvmflame'); if (!el) return;
+  const stored = S.record?.stored_since;
+  if (DEMO || !stored) { patch(el, DEMO ? '' : '<div class="sub" style="padding:8px 2px">Press <b>Record</b> to see, minute by minute, where all your JVMs spend their time.</div>'); return; }
+  const p = prof.all;
+  patch(el, `<div class="profh"><b>Across JVMs</b><span class="sub">session → JVM → activity → frames</span>
+      <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf('all', {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
+      <span class="seg">${ALL_RANGES.map(([r, l]) => `<button class="${p.range === r ? 'on' : ''}" onclick="setProf('all', {range:${r}, zoom: []})">${l.replace('last ', '')}</button>`).join('')}</span></div>
+    <div class="profc"><div class="flameh" id="flameh-all"></div><canvas id="flame-all"></canvas></div>`);
+  loadAllFlame();
+}
+async function loadAllFlame(force) {
+  const p = prof.all;
+  if (p.busy || (!force && p.fetched && Date.now() - p.fetched < 30000)) { drawFlame('all'); return; }
+  p.busy = true;
+  try { p.flame = await api(`/api/jvms/flame?t0=${Date.now() / 1000 - p.range}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}`); p.error = null; }
+  catch (e) { p.error = String(e.message || e); }
+  p.busy = false; p.fetched = Date.now();
+  drawFlame('all');
+}
+// What a recorded JVM is doing, from the last 30 seconds of samples
+function activityLine(j, n = 3) {
+  const a = recState().jvms[j.id]?.activities;
+  if (!a?.length) return '';
+  return a.slice(0, n).map(([name, pct, threads]) => `${esc(name)} <b>${pct}%</b>${threads > 1 ? `<span class="sub"> ×${threads}</span>` : ''}`).join(' · ');
 }

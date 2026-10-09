@@ -94,3 +94,6 @@ body.jbox-open { overflow: hidden; }
 .profc canvas { display: block; cursor: crosshair; }
 .profc canvas[id^="flame"] { cursor: pointer; }
 .flameh { margin-top: 12px; }
+.jact { font-size: 11.5px; color: var(--ink-2); white-space: normal; }
+.jact b { font-weight: 600; color: var(--ink); }
+#jvmflame { margin-top: 10px; }

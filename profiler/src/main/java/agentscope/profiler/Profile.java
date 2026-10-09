@@ -30,6 +30,7 @@ public final class Profile {
   private final List<String> frames = new ArrayList<>();
   private final Map<IntArray, Integer> stackIds = new HashMap<>();
   private final List<int[]> stacks = new ArrayList<>();  // frame ids, root first
+  private final List<String> stackActivity = new ArrayList<>();  // by stack id, classified lazily
   private final Map<Long, Integer> threadIds = new HashMap<>();
   private final List<String> threadNames = new ArrayList<>();
   private final List<Long> threadJavaIds = new ArrayList<>();
@@ -113,10 +114,19 @@ public final class Profile {
     return id;
   }
 
+  private static final java.util.Set<String> JAVA_FRAME_TYPES = java.util.Set.of("Interpreted", "JIT compiled", "Inlined");
+
+  /**
+   * A frame is an opaque string from here on. Java frames are "class.method"; anything else keeps whatever its producer
+   * called it, tagged with its frame type (" [Native]", and from async-profiler " [C++]", " [Kernel]", stubs...), so
+   * nothing downstream has to parse frame names to tell them apart.
+   */
   private int frame(RecordedFrame f) {
     RecordedMethod m = f.getMethod();
-    String name = m == null ? "?" : m.getType().getName() + "." + m.getName();
-    if ("Native".equals(f.getType())) name += " [native]";
+    String type = m == null ? null : m.getType() == null ? null : m.getType().getName();
+    String name = m == null ? "?" : type == null || type.isEmpty() ? m.getName() : type + "." + m.getName();
+    String ft = f.getType();
+    if (ft != null && !JAVA_FRAME_TYPES.contains(ft)) name += " [" + ft + "]";
     return frame(name);
   }
 
@@ -250,6 +260,80 @@ public final class Profile {
     out.put("total", total);
     out.put("samples", n);
     out.put("root", root.toJson(frames, Math.max(1, (long) (total * minShare)), "all"));
+    return out;
+  }
+
+  private String activity(int stack) {
+    if (stack < 0) return "?";
+    while (stackActivity.size() <= stack) stackActivity.add(null);
+    String a = stackActivity.get(stack);
+    if (a == null) {
+      List<String> names = new ArrayList<>();
+      for (int f : stacks.get(stack)) names.add(frames.get(f));
+      stackActivity.set(stack, a = Activities.classify(names));
+    }
+    return a;
+  }
+
+  /** What the JVM's threads have been doing since {@code since}: CPU samples and distinct threads per activity, busiest first. */
+  public synchronized List<Map<String, Object>> activities(long since) {
+    Map<String, long[]> n = new HashMap<>();
+    Map<String, java.util.Set<Integer>> threads = new HashMap<>();
+    for (int i = samples.lo; i < samples.n; i++) {
+      if (samples.t[i] < since || samples.c[i] != CPU) continue;
+      String a = activity(samples.b[i]);
+      n.computeIfAbsent(a, x -> new long[1])[0]++;
+      threads.computeIfAbsent(a, x -> new java.util.HashSet<>()).add(samples.a[i]);
+    }
+    List<Map<String, Object>> out = new ArrayList<>();
+    n.forEach((a, c) -> {
+      Map<String, Object> m = new LinkedHashMap<>();
+      m.put("activity", a);
+      m.put("samples", c[0]);
+      m.put("threads", threads.get(a).size());
+      out.add(m);
+    });
+    out.sort((x, y) -> Long.compare((long) y.get("samples"), (long) x.get("samples")));
+    return out;
+  }
+
+  /**
+   * [t0, t1) for storage, exactly: weight per (kind, thread group, stack id). Stack ids are this profile's, stable for
+   * its lifetime; {@link #stacks} defines the ones the caller hasn't seen yet.
+   */
+  public synchronized Map<String, Object> minute(long t0, long t1) {
+    Map<String, Integer> groups = new LinkedHashMap<>();
+    Map<List<Integer>, long[]> acc = new LinkedHashMap<>();
+    for (int i = samples.lo; i < samples.n; i++) {
+      long t = samples.t[i];
+      if (t < t0 || t >= t1) continue;
+      int th = samples.a[i];
+      int g = groups.computeIfAbsent(Activities.threadGroup(th < 0 ? null : threadNames.get(th)), x -> groups.size());
+      acc.computeIfAbsent(List.of((int) samples.c[i], g, samples.b[i]), x -> new long[1])[0] += samples.w[i];
+    }
+    List<Object> rows = new ArrayList<>();
+    acc.forEach((k, w) -> rows.add(List.of(KINDS.get(k.get(0)), k.get(1), k.get(2), w[0])));
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("groups", new ArrayList<>(groups.keySet()));
+    out.put("rows", rows);  // [kind, group index, stack id (-1: no stack), weight]
+    return out;
+  }
+
+  /** Definitions of stack ids from {@link #minute}: frames (root first, as indexes into a frame list) and activity. */
+  public synchronized Map<String, Object> stacks(List<Integer> ids) {
+    Map<Integer, Integer> frameIndex = new LinkedHashMap<>();
+    List<Object> defs = new ArrayList<>();
+    for (int id : ids) {
+      if (id < 0 || id >= stacks.size()) continue;
+      List<Integer> path = new ArrayList<>();
+      for (int f : stacks.get(id)) path.add(frameIndex.computeIfAbsent(f, x -> frameIndex.size()));
+      defs.add(List.of(id, path, activity(id)));
+    }
+    List<String> names = new ArrayList<>();
+    for (int f : frameIndex.keySet()) names.add(frames.get(f));
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("frames", names);
+    out.put("stacks", defs);  // [stack id, [frame indexes, root first], activity]
     return out;
   }
 

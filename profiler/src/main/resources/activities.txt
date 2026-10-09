@@ -1,0 +1,34 @@
+# What a stack is doing, for agentscope's "activity" view: <regex on "class.method" frames> TAB <label>.
+# The first rule that matches any frame of a stack wins, so specific rules come before general ones.
+# A label may use $1 for the regex's first group (lowercased). Unmatched stacks are named after their top non-JDK package.
+
+# Scala 2 compiler, by phase
+scala\.tools\.nsc\.typechecker\.	scalac: typer
+scala\.tools\.nsc\.transform\.patmat\.	scalac: patmat
+scala\.tools\.nsc\.transform\.(\w+?)(?:\$|\.)	scalac: $1
+scala\.tools\.nsc\.backend\.	scalac: backend
+scala\.tools\.nsc\.ast\.parser\.	scalac: parser
+scala\.tools\.nsc\.symtab\.classfile\.	scalac: classfile reading
+scala\.tools\.nsc\.	scalac
+# Scala 3 compiler
+dotty\.tools\.dotc\.typer\.	scala 3: typer
+dotty\.tools\.backend\.	scala 3: backend
+dotty\.tools\.dotc\.parsing\.	scala 3: parser
+dotty\.tools\.dotc\.core\.tasty\.	scala 3: TASTy
+dotty\.tools\.dotc\.transform\.(\w+?)(?:\$|\.)	scala 3: $1
+dotty\.tools\.	scala 3
+# Java and Kotlin compilers
+com\.sun\.tools\.javac\.	javac
+org\.jetbrains\.kotlin\.	kotlinc
+# Tests
+org\.scalatest\.|munit\.|org\.junit\.|utest\.|org\.specs2\.|weaver\.|zio\.test\.|hedgehog\.|org\.scalacheck\.	test
+# Build tools
+sbt\.internal\.inc\.|xsbt\.	zinc
+coursier\.|org\.apache\.ivy\.|org\.eclipse\.aether\.	dependency resolution
+org\.gradle\.	gradle
+org\.apache\.maven\.	maven
+bloop\.	bloop
+scala\.meta\.internal\.metals\.|scala\.meta\.	metals
+sbt\.	sbt
+# Commonly hot, whoever calls them
+java\.util\.zip\.|java\.util\.jar\.	zip / jar

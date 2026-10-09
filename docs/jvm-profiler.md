@@ -1,6 +1,6 @@
 # Design: a built-in JVM profiler
 
-Status: phases 1 (JVM top), 2 (helper and snapshots) and 3 (continuous JFR) are done; the rest is a proposal.
+Status: phases 1 (JVM top), 2 (helper and snapshots), 3 (continuous JFR) and 4 (across JVMs) are done; phase 5 is a proposal.
 
 ## Problem
 
@@ -108,9 +108,10 @@ The JFR repository *is* the raw store for the recent window; we don't copy sampl
 
 - `jvm`: pid, start time, session, label, JDK version, collector, main class, options. Kept 30 days.
 - `jvm_minute`: tier-0 counters per minute (CPU, RSS, heap used / committed / max, GC and safepoint %, alloc rate, threads, classes, young and full GCs). Kept 30 days like `proc_minute`: a year of per-minute rows for every idle IDE and daemon isn't worth the space.
-- `stack` / `frame`: interned stacks, frames as strings.
-- `sample_minute`: (jvm, minute, thread group, activity, stack, event) → count. Kept 7 days, so flame graphs for older ranges are minute-resolution.
-- `heat_second`: per JVM per second, a small blob of sub-second sample counts. Kept 24 h.
+- `frame`, `node`, `tgroup`: constant pools, as in JFR's own format. Frames are opaque strings, stored once. Stacks are a prefix tree of (parent, frame) nodes, so stacks share their common prefixes; a node that ends a sampled stack also records the stack's activity (a function of the stack, not of each sample).
+- `sample_blob`: per JVM, minute and kind (cpu, native, alloc, lock, park), one zlib-compressed run of varints, (thread group, node delta, weight) sorted by node. Lossless: nothing is folded away. Kept 7 days, so flame graphs for older ranges are minute-resolution.
+
+The sub-second heatmap is only for the live window (the helper's 30 minutes); it isn't stored.
 
 Thread groups are thread names with numeric suffixes stripped (`scala-execution-context-global-17` → `scala-execution-context-global-*`), which keeps cardinality sane.
 
@@ -148,7 +149,10 @@ Each phase is usable on its own.
   - JFR's sampler hardly sees a thread spinning in a tight loop: 5 execution samples in 5 seconds, where calls and allocation in the loop give the expected ~50/s. It mostly fails to walk a stack whose PC sits in compiled loop code without debug info. Real workloads sample fine, but it's a bias to know about, and one reason for async-profiler in phase 5.
   - `jdk.ThreadCPULoad`'s user and system are fractions of the whole machine, not of a core: multiply by the CPU count.
   - Global Record on this machine picked up 6 JVMs within one sampler tick, and after Stop none had an `agentscope` recording left.
-- **TODO 4. Across JVMs.** Aggregates into SQLite; session-rooted machine-wide flame graph; activity classifier and the card summary.
+- **DONE 4. Across JVMs.** The activity classifier (`activities.txt`: ordered regexes over frames, the first rule matching any frame wins, `$1` for a captured phase name; otherwise the top non-JDK Java package; stacks with no Java frames are "native"), cached per stack. Recorded JVMs show what they're doing (last 30 s: share of CPU samples and threads per activity) on their row, their session's card and their full view. Once a minute every recording's samples go to SQLite exactly (helper: `minute` gives weights per stack id, `stacks` defines the ones the server hasn't seen, so a failed store can't lose a definition). The JVMs section gets **Across JVMs**: a flame graph over every recorded JVM for the last 15 min to 7 days, session → JVM → activity → frames, top-down or reversed, with the label levels drawn apart from frames. Measured on a javac workload plus a busy fixture: CPU blobs about 430 bytes per JVM-minute, allocation about 3.9 KB; the stack pool grew to 57k nodes in the first 4 minutes (javac's deep, varied allocation stacks), then 1.1k in the 5th as paths repeat. Learned along the way:
+  - The first cut folded stacks under 0.2% into their callers to bound storage. Unnecessary: stacks are very compressible (that's most of what the JFR format is about), so the store keeps everything and compresses instead.
+  - Frames are opaque. async-profiler's frames won't look like JFR's (C++ and kernel frames, itable/vtable stubs, threads with no Java frames), so a non-Java frame keeps its producer's name plus its frame type (` [Native]`, ` [C++]`...), the classifier only reads package names from Java-shaped frames, and the page colours anything else as native.
+  - Unexplained, noted for later: the javac workload, compiling the same unchanged and well-typed sources in a loop, failed once after about 11 minutes with an inference error ("inference variable M has incompatible bounds") in a JVM whose recording had been started and stopped several times.
 - **TODO 5. Captures (tier 2).** async-profiler start/stop with `--jfrsync`; capture list; open in asprof's HTML; diff.
 
 Before phase 3: a spike that a JDK 21 consumer can tail repositories written by the oldest JVMs we expect (JDK 8u, 11, 17), and that `EventStream.openRepository` copes with chunk rotation and the target exiting mid-stream.
@@ -166,7 +170,7 @@ Before phase 3: a spike that a JDK 21 consumer can tail repositories written by 
 Small files, one concern each:
 
 - `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, snapshots. `helper.py`: the helper process. Both imported by `agentscope.py`.
-- `recording.py`: the Record switch, scope and per-JVM recordings.
+- `recording.py`: the Record switch, scope and per-JVM recordings; activities and per-minute storage. `profiles.py`: the stored profiles (pools, blobs, the machine-wide query).
 - `static/jvm.js`: the JVMs section, full view and snapshots. `static/profile.js`: the Record button, heatmap, thread lanes and flame graph.
 - `profiler/`: the Maven project (`pom.xml`, `mvnw`, `src/main/java/...`, `src/main/resources/agentscope.jfc`), building `profiler/target/agentscope-profiler.jar`.
 

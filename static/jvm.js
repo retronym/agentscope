@@ -44,7 +44,7 @@ function jvmRows(list, withSession, inline) {
     const s = j.sid && S.sMap[j.sid], open = inline && openJvms.has(j.id);
     const who = withSession ? `<td class="who">${s ? `<a href="#" onclick="event.stopPropagation();openDrawer('${s.sid}');return false" style="text-decoration:none"><span class="lane-chip">${esc(s.lane)}</span> ${esc(s.title)}</a>${j.how && j.how !== 'tree' ? ` <span class="sub" title="attributed by ${esc(j.how)}">⌁</span>` : ''}` : '<span class="dim">no session</span>'}</td>` : '';
     return `<tr class="jr ${open ? 'open' : ''}" onclick="${inline ? 'toggleJvm' : 'openJvmBox'}(${j.id})" title="${esc(j.main || '')}">
-      <td><b>${esc(j.label)}</b> <span class="sub">${j.pid}</span> ${recDot(j)}<div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div></td>${who}
+      <td><b>${esc(j.label)}</b> <span class="sub">${j.pid}</span> ${recDot(j)}<div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div>${activityLine(j) ? `<div class="jact">${activityLine(j, 2)}</div>` : ''}</td>${who}
       <td class="num">${uptime(j.start)}</td>
       <td class="num">${cores(j.cpu)} ${jvmSpark(j, 1, 'var(--s1)', 56, 16, 100)}</td>
       <td>${heapBar(j)} <span class="sub">${mb(j.heap_used)} / ${mb(j.heap_max)}</span></td>
@@ -126,6 +126,7 @@ function renderJvms() {
   patch($('#jvms'), list.length ? jvmTable(list, true) : `<div class="empty" style="padding:10px 12px">${all.length ? 'no JVMs match the filter' : 'no JVMs running (or none publishing perf data)'}</div>`);
   for (const id of openJvms) if (!jvmHistCache[id]) loadJvmHist(id);
   renderJvmBox();
+  renderAllFlame();
 }
 
 // ---------------------------------------------------------------- full-size view of one JVM (#jvm=<id>), over everything
@@ -155,7 +156,8 @@ function renderJvmBox() {
       <div class="row">${s ? `<a href="#" class="lane-chip" onclick="closeJvmBox();openDrawer('${s.sid}');return false">${esc(s.lane)} · ${esc(s.title)}</a>` : '<span class="dim">no session</span>'}
         <span class="sub">${esc(j.version)} · ${esc(j.gc || '?')} · up ${uptime(j.start)}</span>${jvmFlags(j)}</div>
       <div class="jbox-stats"><span><b>${cores(j.cpu)}</b> cores ${jvmSpark(j, 1, 'var(--s1)', 80, 18, 100)}</span><span>${heapBar(j, 140)} <b>${mb(j.heap_used)}</b> / ${mb(j.heap_max)} heap</span>
-        <span>GC <b>${pct(j.gc_pct)}</b></span><span>alloc ≈ <b>${rate(j.alloc)}</b></span><span><b>${j.threads}</b> threads</span><span><b>${(j.classes / 1000).toFixed(0)}k</b> classes</span></div></div>`);
+        <span>GC <b>${pct(j.gc_pct)}</b></span><span>alloc ≈ <b>${rate(j.alloc)}</b></span><span><b>${j.threads}</b> threads</span><span><b>${(j.classes / 1000).toFixed(0)}k</b> classes</span></div>
+      ${activityLine(j) ? `<div class="jact" style="margin:-6px 0 12px">doing: ${activityLine(j, 4)}</div>` : ''}</div>`);
   // three regions, patched separately so the profile's canvases survive the 5-second refresh
   patch(box.querySelector('.jbox-prof'), profileSection(j));
   patch(box.querySelector('.jbox-detail'), jvmDetail(j, true));
@@ -166,7 +168,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && boxId != n
 // One line per JVM on a session card; only JVMs worth mentioning.
 function jvmLine(s) {
   const js = jvmSorted((S.jvms || []).filter(j => j.sid === s.sid)).filter(j => j.flags.length || j.cpu >= 5 || j.heap_used >= 200e6).slice(0, 2);
-  return js.map(j => `<div class="jline"><span>☕ ${esc(j.label)}</span>${heapBar(j, 60)}<span>${mb(j.heap_used)} / ${mb(j.heap_max)}</span>${j.gc_pct ? `<span>GC ${pct(j.gc_pct)}</span>` : ''}${jvmFlags(j)}</div>`).join('');
+  return js.map(j => `<div class="jline"><span>☕ ${esc(j.label)}</span>${heapBar(j, 60)}<span>${mb(j.heap_used)} / ${mb(j.heap_max)}</span>${j.gc_pct ? `<span>GC ${pct(j.gc_pct)}</span>` : ''}${jvmFlags(j)}</div>` +
+    (activityLine(j) ? `<div class="jline jact">${recDot(j)} ${activityLine(j)}</div>` : '')).join('');
 }
 function jvmDrawer(s) {
   const js = jvmSorted((S.jvms || []).filter(j => j.sid === s.sid));

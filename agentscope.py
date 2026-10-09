@@ -23,7 +23,7 @@ import argparse, atexit, collections, glob, json, os, re, signal, sqlite3, subpr
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
-import helper, jvm, recording
+import helper, jvm, profiles, recording
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
@@ -524,6 +524,7 @@ def db_init():
     with db() as c:
         c.executescript(SCHEMA)
         c.executescript(jvm.SCHEMA)
+        c.executescript(profiles.SCHEMA)
         # one-off import of the JSONL history written by earlier versions
         for f in sorted(glob.glob(os.path.join(CACHE, "load-*.jsonl"))):
             rows_s, rows_b = [], []
@@ -548,6 +549,7 @@ def db_prune():
         c.execute("DELETE FROM session_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
         c.execute("DELETE FROM bucket_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
         jvm.prune(c, now)
+        profiles.prune(c, now)
 
 
 SYSTEM_HINTS = ("/System/", "/usr/libexec", "/usr/sbin", "/sbin/", "/Library/SystemExtensions", "/Library/Apple/") + \
@@ -999,6 +1001,21 @@ def build_state(sampler):
                               for h in hist[-720:]])
 
 
+def jvm_labels(jvm_id, _cache={}):
+    """(session title, JVM label) for the machine-wide flame graph's first two levels."""
+    if time.time() - _cache.get(jvm_id, (0,))[0] > 60:  # sessions get attributed late; don't keep "no session" forever
+        with db() as c:
+            r = c.execute("SELECT sid, label, pid FROM jvm WHERE id = ?", (jvm_id,)).fetchone()
+        sid, label, pid = r or (None, "?", 0)
+        m, t = meta_cached().get(sid) or {}, {}
+        if sid:
+            with _index_lock:
+                t = next((e["d"] for e in _index.values() if e["d"]["sid"] == sid), {})
+        title = m.get("title") or t.get("title") or (t.get("first_prompt") or "")[:60] or (sid[:8] if sid else "no session")
+        _cache[jvm_id] = (time.time(), (title, f"{label} {pid}"))
+    return _cache[jvm_id][1]
+
+
 _mem = []
 
 
@@ -1025,7 +1042,8 @@ def serve(port):
         sess = {k: v for k, v in r["s"].items() if not k.startswith("@")}
         buckets = {k[1:]: v for k, v in r["s"].items() if k.startswith("@")}
         sampler.hist.append((r["t"], sess, buckets))
-    sampler.recorder = recording.Recorder(sampler.jvms, _helper, os.path.join(os.path.dirname(DB_FILE), "recording.json"))  # beside the db: a dev copy keeps its own
+    sampler.recorder = recording.Recorder(sampler.jvms, _helper, os.path.join(os.path.dirname(DB_FILE), "recording.json"), db)  # beside the db: a dev copy keeps its own
+    sampler.recorder.stored_first()
     atexit.register(sampler.recorder.stop_all)
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # run atexit (stop recordings) on kill, too
     threading.Thread(target=sampler.loop, args=(meta_cached,), daemon=True).start()
@@ -1088,6 +1106,9 @@ def serve(port):
                     r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
                                      kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1")
                     self._send(200, json.dumps(r["flame"]), "application/json")
+                elif path == "/api/jvms/flame":
+                    self._send(200, json.dumps(profiles.flame(db, float(q.get("t0", 0)), float(q.get("t1", time.time() + 60)), q.get("kind", "cpu"),
+                                                              q.get("reverse") == "1", jvm_labels)), "application/json")
                 elif path == "/api/load":
                     self._send(200, json.dumps(load_history(float(q.get("since", time.time() - 86400)))), "application/json")
                 else:
