@@ -108,15 +108,16 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #drawer pre a, .sum a, .meta a, .item .b a { color: var(--s1); }
 #drawer pre { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow: auto; }
 #drawer { overflow-x: hidden; }
-#drawer table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; font-variant-numeric: tabular-nums; }
-#drawer td:nth-child(1) { width: 64px; color: var(--muted); } #drawer td:nth-child(3), #drawer td:nth-child(4) { width: 64px; }
-#drawer .ptable td:nth-child(3) { width: 130px; } #drawer .ptable td:nth-child(4) { width: 84px; } #drawer .ptable td:nth-child(5), #drawer .ptable td:nth-child(6) { width: 64px; }
-#drawer td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#drawer td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
+/* process tables only; markdown tables in the thread keep their own layout */
+#drawer table.pt { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; font-variant-numeric: tabular-nums; }
+#drawer table.pt td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
+#drawer table.pt td:nth-child(1) { width: 64px; color: var(--muted); } #drawer table.pt td:nth-child(3), #drawer table.pt td:nth-child(4) { width: 64px; }
+#drawer table.pt.ptable td:nth-child(3) { width: 130px; } #drawer table.pt.ptable td:nth-child(4) { width: 84px; } #drawer table.pt.ptable td:nth-child(5), #drawer table.pt.ptable td:nth-child(6) { width: 64px; }
+#drawer table.pt td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #drawer .close { position: absolute; top: 16px; right: 20px; border: 0; background: transparent; font-size: 16px; color: var(--muted); }
 .thread { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
-.msg-user { align-self: flex-end; max-width: 86%; min-width: 0; overflow-wrap: anywhere; background: var(--surface-2); border-radius: 14px; padding: 9px 14px; font: 14px/1.55 var(--font-ui); }
-.msg-asst { font: 15.5px/1.65 var(--font-prose); color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.msg-user { align-self: flex-end; max-width: 86%; min-width: 0; overflow-wrap: break-word; background: var(--surface-2); border-radius: 14px; padding: 9px 14px; font: 14px/1.55 var(--font-ui); }
+.msg-asst { font: 15.5px/1.65 var(--font-prose); color: var(--ink); min-width: 0; overflow-wrap: break-word; }
 .msg-meta { font: 11px var(--font-ui); color: var(--muted); margin-bottom: 3px; }
 .msg-user .msg-meta { text-align: right; }
 .msg-tools { font: 12px/1.5 var(--font-ui); color: var(--muted); border-left: 2px solid var(--border); padding: 2px 0 2px 10px; }
@@ -137,8 +138,8 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .md pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; max-height: none; }
 .md pre code { background: none; border: 0; padding: 0; font-size: 12.5px; line-height: 1.5; white-space: pre; }
 .md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--ink-2); font-family: var(--font-ui); font-size: .9em; }
-.md table { border-collapse: collapse; font: 13px var(--font-ui); display: block; overflow-x: auto; }
-.md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.md table { border-collapse: collapse; font: 13px/1.45 var(--font-ui); display: block; overflow-x: auto; max-width: 100%; }
+.md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; overflow-wrap: normal; word-break: normal; min-width: 6em; max-width: 34em; }
 .md th { background: var(--surface-2); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .md-plain { white-space: pre-wrap; }
@@ -670,7 +671,7 @@ function drawerMeta(s) {
     ${Object.keys(s.issues).length ? `<div class="k">Issues mentioned</div><div style="display:flex;gap:6px;flex-wrap:wrap">${issueChips(s)}</div>` : ''}
     ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
-    ${s.load ? `<details><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table>${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
+    ${s.load ? `<details><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table class="pt">${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
     <details id="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>
     <details><summary class="k" style="cursor:pointer">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</summary><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre></details>
@@ -697,7 +698,7 @@ async function loadProcHistory(sid) {
   const total = rows.reduce((a, r) => a + r.cpu_s, 0);
   $('#phist-body').className = '';
   $('#phist-body').innerHTML = `<div class="when" style="margin-bottom:4px">${fmtCpuS(total)} across ${rows.length} processes · ${fmtTime(t0)} → ${fmtTime(t1)}</div>
-    <table class="ptable"><tr class="when"><td>pid</td><td>process</td><td>CPU over time</td><td align="right">total</td><td align="right">peak</td><td align="right">peak mem</td></tr>
+    <table class="pt ptable"><tr class="when"><td>pid</td><td>process</td><td>CPU over time</td><td align="right">total</td><td align="right">peak</td><td align="right">peak mem</td></tr>
     ${rows.slice(0, 30).map(r => `<tr title="${esc(r.args || '')}${r.cwd ? '\ncwd: ' + esc(r.cwd) : ''}"><td>${r.pid}</td><td>${esc(r.label)}${r.how && r.how !== 'tree' ? ` <span class="when">via ${esc(r.how)}</span>` : ''}<div class="when">${fmtTime(r.first)} → ${fmtTime(r.last)}</div></td><td>${miniSpark(r.series, t0, t1)}</td><td align="right">${fmtCpuS(r.cpu_s)}</td><td align="right">${cores(r.peak_cpu)}</td><td align="right">${gb(r.peak_rss)}</td></tr>`).join('')}</table>`;
 }
 
