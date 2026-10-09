@@ -1,0 +1,12 @@
+[tasks.serve]
+description = "Run the live dashboard on http://localhost:8377"
+run = "python3 -u agentscope.py"
+
+[tasks.demo]
+description = "Export an anonymized static demo to dist/index.html (needs gh auth; reads your local sessions)"
+run = "python3 demo/export.py --out dist/index.html"
+
+[tasks.demo-serve]
+description = "Export the demo and serve dist/ on http://localhost:8380"
+depends = ["demo"]
+run = "python3 -m http.server 8380 --bind 127.0.0.1 --directory dist"

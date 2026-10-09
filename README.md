@@ -64,6 +64,17 @@ Site-specific system processes (antivirus, MDM agents) can be bucketed as "syste
 
 The data formats it reads are Claude Code internals, not a public API, and may change between releases.
 
+## Demo with synthetic data
+
+```
+mise run demo          # writes dist/index.html, one self-contained file
+mise run demo-serve    # export, then serve it on http://localhost:8380
+```
+
+The exporter takes a real snapshot of your sessions and keeps its *structure*: timings, activity patterns, CPU and memory, statuses, PR states, session families, process trees. Every piece of *text* is replaced with generated stand-ins of the same shape: titles, prompts, agent messages, branches, repo and owner names, PR titles, paths, command lines. A paragraph becomes a paragraph of similar length, a table a table, a list a list. The page then answers its API calls (including search) from the embedded data, and links to GitHub and the Claude app are disabled.
+
+Before writing, the export checks every string value against a denylist built from the real snapshot: your GitHub login, home path, repo and owner names, session and PR titles, branch names. It refuses to write if anything survives. Timestamps are real, so the demo shows when you worked, though not on what.
+
 ## License
 
 Apache 2.0

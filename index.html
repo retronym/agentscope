@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agentscope</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E %3Crect width='64' height='64' rx='14' fill='%23262624'/%3E %3Crect x='10' y='16' width='30' height='7' rx='3.5' fill='%23d97757'/%3E %3Crect x='18' y='28.5' width='28' height='7' rx='3.5' fill='%23d97757' opacity='.72'/%3E %3Crect x='10' y='41' width='20' height='7' rx='3.5' fill='%23d97757' opacity='.45'/%3E %3Cline x1='51' y1='11' x2='51' y2='53' stroke='%23faf9f5' stroke-width='3' stroke-linecap='round'/%3E %3Ccircle cx='51' cy='32' r='4.5' fill='%23faf9f5'/%3E %3C/svg%3E">
 <style>
 :root {
   color-scheme: light;
@@ -43,7 +44,8 @@ body { margin: 0; background: var(--page); color: var(--ink); font: 13px/1.5 var
 a { color: inherit; }
 header { position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 header h1 { font: 500 19px/1 var(--font-prose); margin: 0 8px 0 0; letter-spacing: -.01em; }
-header h1::before { content: "✻ "; color: var(--accent); }
+header h1 { display: inline-flex; align-items: center; gap: 8px; }
+header h1 img { width: 22px; height: 22px; border-radius: 5px; }
 .tile { display: flex; flex-direction: column; min-width: 90px; }
 .tile .v { font-size: 18px; font-weight: 600; }
 .tile .l { color: var(--muted); font-size: 11px; }
@@ -189,7 +191,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 </head>
 <body>
 <header>
-  <h1>agentscope</h1>
+  <h1><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E %3Crect width='64' height='64' rx='14' fill='%23262624'/%3E %3Crect x='10' y='16' width='30' height='7' rx='3.5' fill='%23d97757'/%3E %3Crect x='18' y='28.5' width='28' height='7' rx='3.5' fill='%23d97757' opacity='.72'/%3E %3Crect x='10' y='41' width='20' height='7' rx='3.5' fill='%23d97757' opacity='.45'/%3E %3Cline x1='51' y1='11' x2='51' y2='53' stroke='%23faf9f5' stroke-width='3' stroke-linecap='round'/%3E %3Ccircle cx='51' cy='32' r='4.5' fill='%23faf9f5'/%3E %3C/svg%3E" alt="">agentscope</h1><span id="demo-badge" class="badge" style="display:none" title="Structure and numbers come from a real snapshot; all text, names and paths are synthetic.">demo · synthetic data</span>
   <div class="tile"><span class="v" id="t-live">–</span><span class="l">live sessions</span></div>
   <div class="tile"><span class="v" id="t-wait">–</span><span class="l">waiting on you</span></div>
   <div class="tile"><span class="v" id="t-cpu">–</span><span class="l">agent CPU (cores)</span></div>
@@ -242,6 +244,58 @@ function patch(el, html) {
   for (const d of el.querySelectorAll('details[data-k]')) if (open.has(d.dataset.k)) d.open = true;
   return true;
 }
+// ---------------------------------------------------------------- data source: live server, or embedded static demo data
+// The static export sets window.STATIC_DATA = {state, load, threads, procs}; every API call is answered from it.
+const DEMO = !!window.STATIC_DATA;
+function staticApi(url) {
+  const D = window.STATIC_DATA, u = new URL(url, 'http://x'), q = Object.fromEntries(u.searchParams);
+  switch (u.pathname) {
+    case '/api/state': return D.state;
+    case '/api/load': return D.load.filter(r => r.t >= +q.since);
+    case '/api/procs': return D.procs[q.sid] || [];
+    case '/api/thread': {
+      const items = D.threads[q.sid]; if (!items) return null;
+      let limit = +q.limit || 60;
+      if (q.around !== undefined) limit = Math.max(limit, items.length - +q.around + 6);
+      return { total: items.length, limit, items: items.slice(-limit) };
+    }
+    case '/api/top': {
+      const t0 = +q.t0, t1 = +q.t1, rows = [];
+      for (const [sid, procs] of Object.entries(D.procs)) for (const p of procs) {
+        const pts = p.series.filter(x => x[0] >= t0 && x[0] < t1); if (!pts.length) continue;
+        rows.push({ id: p.id, pid: p.pid, label: p.label, sid, how: p.how, cwd: p.cwd, cpu_s: Math.round(pts.reduce((a, x) => a + x[1], 0) * 0.6), peak_cpu: Math.max(...pts.map(x => x[1])), peak_rss: Math.max(...pts.map(x => x[2])) });
+      }
+      return rows.sort((a, b) => b.cpu_s - a.cpu_s).slice(0, +q.limit || 15);
+    }
+    case '/api/search': {  // all terms required, last one a prefix; snippets marked with \u0002 \u0003 like FTS5's
+      const terms = (q.q || '').toLowerCase().split(/\s+/).filter(Boolean).map(t => t.replace(/^"|"$/g, ''));
+      if (!terms.length) return [];
+      const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const res = terms.map((t, i) => new RegExp(i === terms.length - 1 ? `\\b${esc(t)}` : `\\b${esc(t)}\\b`, 'gi'));
+      const groups = [];
+      for (const [sid, items] of Object.entries(D.threads)) {
+        const hits = items.filter(it => it.text && res.every(r => { r.lastIndex = 0; return r.test(it.text); }));
+        if (!hits.length) continue;
+        groups.push({ sid, n: hits.length, hits: hits.slice(-3).reverse().map(it => {
+          res[0].lastIndex = 0;
+          const m = res[0].exec(it.text), at = m ? m.index : 0;
+          let snip = (at > 60 ? '…' : '') + it.text.slice(Math.max(0, at - 60), at + 120) + '…';
+          for (const r of res) snip = snip.replace(r, x => '\u0002' + x + '\u0003');
+          return { role: it.role, t: it.t, idx: it.idx, snippet: snip };
+        }) });
+      }
+      return groups.sort((a, b) => b.n - a.n).slice(0, 30);
+    }
+  }
+  return null;
+}
+async function api(url) {
+  if (DEMO) { const r = staticApi(url); if (r === null) throw new Error('not found'); return r; }
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
 function localStore(k, v) { try { if (v === undefined) return localStorage.getItem('as.' + k); localStorage.setItem('as.' + k, v); } catch (e) { return null; } }
 function ago(t) {
   if (!t) return '';
@@ -310,8 +364,7 @@ function matches(s) {
 // ---------------------------------------------------------------- fetch
 async function refresh() {
   try {
-    const r = await fetch('/api/state');
-    S = await r.json();
+    S = await api('/api/state');
   } catch (e) { $('#updated').innerHTML = '<span class="err">server unreachable</span>'; return; }
   if (window.UI_VERSION && S.ui !== window.UI_VERSION) return location.reload();  // page source changed: pick it up
   window.UI_VERSION = S.ui;
@@ -320,7 +373,7 @@ async function refresh() {
   render();
 }
 async function refreshLoad() {
-  try { LOAD = await (await fetch('/api/load?since=' + (Date.now() / 1000 - range * 86400))).json(); } catch (e) { LOAD = []; }
+  try { LOAD = await api('/api/load?since=' + ((S?.now ?? Date.now() / 1000) - range * 86400)); } catch (e) { LOAD = []; }
   if (S) renderTimeline();
 }
 
@@ -598,7 +651,7 @@ function renderTimeline() {
         .map(r => `<div style="display:flex;gap:8px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label)} <span class="tm">· ${esc(S.sMap[r.sid]?.title || '')}</span></span><b>${cores(r.peak_cpu)}</b></div>`).join('');
       tip(e, head + (cached ? (laneTop(cached) ? `<div class="tm" style="margin-top:6px">processes (peak cores)</div>${laneTop(cached)}` : '') : '<div class="tm">…</div>'));
       if (!cached && !topPending[k]) {
-        topPending[k] = fetch(`/api/top?t0=${b0}&t1=${b1}&limit=80`).then(r => r.json()).then(rows => { topCache[k] = rows; if ($('#tip').style.display === 'block') tip(e, head + (laneTop(rows) ? `<div class="tm" style="margin-top:6px">processes (peak cores)</div>${laneTop(rows)}` : '')); });
+        topPending[k] = api(`/api/top?t0=${b0}&t1=${b1}&limit=80`).then(rows => { topCache[k] = rows; if ($('#tip').style.display === 'block') tip(e, head + (laneTop(rows) ? `<div class="tm" style="margin-top:6px">processes (peak cores)</div>${laneTop(rows)}` : '')); });
       }
       return;
     }
@@ -615,11 +668,12 @@ function renderTimeline() {
     const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     const hit = findHit(mx, my);
     if (hit?.kind === 's') openDrawer(hit.s.sid);
-    else if (hit?.kind === 'pr') window.open(hit.p.url, '_blank', 'noopener');
+    else if (hit?.kind === 'pr' && !DEMO) window.open(hit.p.url, '_blank', 'noopener');
   };
 }
 // GitHub refs: every PR / issue mention is a link.
-const ghUrl = (key, kind) => { const [repo, n] = key.split('#'); return `https://github.com/${repo}/${kind}/${n}`; };
+const ghUrl = (key, kind) => DEMO ? '#' : ghUrl_(key, kind);
+const ghUrl_ = (key, kind) => { const [repo, n] = key.split('#'); return `https://github.com/${repo}/${kind}/${n}`; };
 const ghA = (key, kind, label) => `<a href="${esc(ghUrl(key, kind))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(label ?? key)}</a>`;
 function linkify(text, s) {
   // input is already escaped; links github URLs, owner/repo#N, and (given a session) bare #N
@@ -642,7 +696,7 @@ function bareRef(n, s) {
 }
 const lk = (t, s) => linkify(esc(t), s);
 // Deep link into the desktop app; it resolves local_* ids among unarchived sessions.
-const claudeLink = s => s.local && !s.archived ? `<a class="pr" href="claude://code/continue?session=${encodeURIComponent(s.local)}" title="Open this session in the Claude app" onclick="event.stopPropagation()">↗ Claude</a>` : '';
+const claudeLink = s => !DEMO && s.local && !s.archived ? `<a class="pr" href="claude://code/continue?session=${encodeURIComponent(s.local)}" title="Open this session in the Claude app" onclick="event.stopPropagation()">↗ Claude</a>` : '';
 const issueChips = s => Object.keys(s.issues || {}).slice(0, 6).map(k => `<a class="pr" href="${esc(ghUrl(k, 'issues'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="issue mentioned in the session"><i style="background:var(--s3);border-radius:50%"></i>${esc(k)}</a>`).join('');
 
 function matchesPR(p) { const hay = [p.title, p.repo, p.head, p.key].join(' ').toLowerCase(); return query.split(/\s+/).every(w => hay.includes(w)); }
@@ -657,7 +711,7 @@ function renderEnds() {
   const sessItem = (s, extra) => `<div class="item" onclick="openDrawer('${s.sid}')"><div class="a"><span class="lane-chip">${esc(s.lane)}</span><span class="x">${esc(s.title)}</span><span class="when">${ago(s.last)}</span>${claudeLink(s)}</div>${extra ? `<div class="b">${extra}</div>` : ''}</div>`;
   const prItem = p => {
     const st = prState(p), s = p.sessions?.[0] && S.sMap[p.sessions[0]];
-    return `<div class="item" onclick="${s ? `openDrawer('${s.sid}')` : `window.open('${esc(p.url)}','_blank')`}"><div class="a"><span style="color:${st.c}">${st.icon}</span><a class="lane-chip" href="${esc(p.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(p.lane)}#${p.number}</a><a class="x" href="${esc(p.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="text-decoration:none">${esc(p.title)}</a><span class="when">${ago(p.updated)}</span></div><div class="b">${esc(st.label)}${p.reviewers?.length ? ' · awaiting ' + esc(p.reviewers.join(', ')) : ''}${s ? ' · session: ' + esc(s.title) : ' · no session'}</div></div>`;
+    return `<div class="item" onclick="${s ? `openDrawer('${s.sid}')` : (DEMO ? '' : `window.open('${esc(p.url)}','_blank')`)}"><div class="a"><span style="color:${st.c}">${st.icon}</span><a class="lane-chip" href="${esc(p.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(p.lane)}#${p.number}</a><a class="x" href="${esc(p.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="text-decoration:none">${esc(p.title)}</a><span class="when">${ago(p.updated)}</span></div><div class="b">${esc(st.label)}${p.reviewers?.length ? ' · awaiting ' + esc(p.reviewers.join(', ')) : ''}${s ? ' · session: ' + esc(s.title) : ' · no session'}</div></div>`;
   };
   // 1. needs you
   const needs = S2.filter(s => s.live?.status === 'waiting' || (s.summary?.needs_action && !s.archived)).sort((a, b) => (b.live?.status === 'waiting') - (a.live?.status === 'waiting') || b.last - a.last);
@@ -724,7 +778,7 @@ async function loadProcHistory(sid) {
   const body = $('#phist-body'); if (!body) return;
   const key = Math.floor(Date.now() / 60000);
   let rows = procCache[sid]?.key === key ? procCache[sid].rows : null;
-  if (!rows) { try { rows = await (await fetch(`/api/procs?sid=${encodeURIComponent(sid)}`)).json(); } catch (e) { rows = []; } procCache[sid] = { key, rows }; }
+  if (!rows) { try { rows = await api(`/api/procs?sid=${encodeURIComponent(sid)}`); } catch (e) { rows = []; } procCache[sid] = { key, rows }; }
   if (openSid !== sid || !$('#phist-body')) return;
   if (!rows.length) { $('#phist-body').innerHTML = 'no process history recorded for this session yet'; return; }
   const t0 = Math.min(...rows.map(r => r.first)), t1 = Math.max(...rows.map(r => r.last)) + 60;
@@ -780,7 +834,7 @@ async function loadThread(s, limit, around) {
   const el = $('#dthread'); if (!el) return;
   if (around === undefined && threadCache[s.sid]?.key === key) { if (el.dataset.key !== key) setThread(el, threadCache[s.sid].html, key); else applyFocus(); return; }
   let th;
-  try { const r = await fetch(`/api/thread?sid=${encodeURIComponent(s.sid)}&limit=${limit}${around !== undefined ? '&around=' + around : ''}`); th = r.ok ? await r.json() : null; } catch (e) { th = null; }
+  try { th = await api(`/api/thread?sid=${encodeURIComponent(s.sid)}&limit=${limit}${around !== undefined ? '&around=' + around : ''}`); } catch (e) { th = null; }
   if (mySeq !== loadSeq) return;  // a newer load (e.g. jump to a search hit) superseded this one
   if (th && th.limit !== limit) { limit = th.limit; $('#drawer').dataset.limit = limit; key = `${s.last}|${limit}`; }
   if (!th) { el.innerHTML = '<div class="empty">no transcript</div>'; return; }
@@ -839,7 +893,7 @@ function openDrawer(sid, keepScroll) {
   }
   const scroll = $('#dbody').scrollTop;
   patch($('#dmeta'), drawerMeta(s));
-  const openBtn = $('#dopen'), canOpen = s.local && !s.archived;
+  const openBtn = $('#dopen'), canOpen = !DEMO && s.local && !s.archived;
   openBtn.style.display = canOpen ? '' : 'none';
   if (canOpen) openBtn.href = `claude://code/continue?session=${encodeURIComponent(s.local)}`;
   loadThread(s, +d.dataset.limit);
@@ -921,7 +975,7 @@ async function runSearch() {
   if (q === lastQuery && box.dataset.html) { box.classList.add('open'); return; }  // same query: reopen as left (scroll, visited)
   if (q !== lastQuery) visited.clear();
   let groups = [];
-  try { groups = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); } catch (e) {}
+  try { groups = await api('/api/search?q=' + encodeURIComponent(q)); } catch (e) {}
   if (seq !== searchSeq) return;
   groups = groups.filter(g => S.sMap[g.sid]);
   box.scrollTop = 0;
@@ -964,6 +1018,11 @@ $('#chips').onclick = e => {
 };
 $('#show-archived').onchange = e => { showArchived = e.target.checked; render(); };
 addEventListener('resize', () => S && render());
+if (DEMO) {
+  $('#demo-badge').style.display = '';
+  // synthetic PRs and issues link nowhere
+  document.addEventListener('click', e => { if (e.target.closest('a[href="#"]')) e.preventDefault(); }, true);  // onclick handlers still run
+}
 refresh().then(refreshLoad);
 setInterval(refresh, 5000);
 setInterval(refreshLoad, 60000);
