@@ -107,7 +107,10 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #drawer .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
 #drawer pre a, .sum a, .meta a, .item .b a { color: var(--s1); }
 #drawer pre { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow: auto; }
-#drawer table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+#drawer { overflow-x: hidden; }
+#drawer table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; font-variant-numeric: tabular-nums; }
+#drawer td:nth-child(1) { width: 64px; color: var(--muted); } #drawer td:nth-child(3), #drawer td:nth-child(4) { width: 64px; }
+#drawer td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #drawer td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
 #drawer .close { position: absolute; top: 16px; right: 20px; border: 0; background: transparent; font-size: 16px; color: var(--muted); }
 .thread { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
@@ -132,7 +135,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .md code { font: .84em var(--font-mono); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: .08em .35em; }
 .md pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; max-height: none; }
 .md pre code { background: none; border: 0; padding: 0; font-size: 12.5px; line-height: 1.5; white-space: pre; }
-.md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--ink-2); }
+.md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--ink-2); font-family: var(--font-ui); font-size: .9em; }
 .md table { border-collapse: collapse; font: 13px var(--font-ui); display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .md th { background: var(--surface-2); font-weight: 600; }
@@ -261,6 +264,8 @@ async function refresh() {
     const r = await fetch('/api/state');
     S = await r.json();
   } catch (e) { $('#updated').innerHTML = '<span class="err">server unreachable</span>'; return; }
+  if (window.UI_VERSION && S.ui !== window.UI_VERSION) return location.reload();  // page source changed: pick it up
+  window.UI_VERSION = S.ui;
   S.prMap = Object.fromEntries(S.prs.map(p => [p.key, p]));
   S.sMap = Object.fromEntries(S.sessions.map(s => [s.sid, s]));
   render();
@@ -649,7 +654,11 @@ function drawerMeta(s) {
 
 // ---------------------------------------------------------------- thread rendering
 if (window.DOMPurify) DOMPurify.addHook('afterSanitizeAttributes', n => { if (n.tagName === 'A' && /^https?:/.test(n.getAttribute('href') || '')) { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener'); } });
+// Text the user pasted arrives wrapped in <pasted_content id=…> tags; show it as a labelled quote instead.
+const unwrapPasted = t => t.replace(/<pasted_content[^>]*>\n?([\s\S]*?)\n?<\/pasted_content[^>]*>/g,
+  (m, body) => '\n\n> **pasted**\n' + body.split('\n').map(l => '> ' + l).join('\n') + '\n\n');
 function md(text, s) {
+  text = unwrapPasted(text);
   if (!window.marked || !window.DOMPurify) return `<div class="md md-plain">${lk(text, s)}</div>`;
   const box = document.createElement('div');
   box.className = 'md';

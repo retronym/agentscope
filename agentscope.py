@@ -733,7 +733,7 @@ def build_state(sampler):
     for s in sessions:
         for p in s["proposals"]:
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
-    return dict(now=time.time(), ncpu=NCPU, mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+    return dict(now=time.time(), ncpu=NCPU, ui=os.path.getmtime(os.path.join(HERE, "index.html")), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
