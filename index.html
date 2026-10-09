@@ -142,6 +142,19 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .md th { background: var(--surface-2); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .md-plain { white-space: pre-wrap; }
+.sres { display: none; position: absolute; top: calc(100% + 6px); right: 0; width: min(640px, 92vw); max-height: 70vh; overflow-y: auto; z-index: 30;
+  background: var(--surface); border: 1px solid var(--axis); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.3); padding: 6px; }
+.sres.open { display: block; }
+.sres .g { padding: 8px 10px; border-radius: 8px; }
+.sres .g + .g { border-top: 1px solid var(--border); }
+.sres .gh { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+.sres .gh .x { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sres .hit { display: block; padding: 4px 8px; border-radius: 6px; cursor: pointer; color: var(--ink-2); font-size: 12.5px; }
+.sres .hit:hover { background: var(--surface-2); }
+.sres .hit .who { color: var(--muted); font-size: 11px; margin-right: 6px; }
+mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.flash { animation: flash 2.2s ease-out; border-radius: 10px; }
+@keyframes flash { 0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 3px transparent; } }
 .btn-link { background: none; border: 1px solid var(--border); color: var(--ink-2); font-size: 12px; }
 .copy { cursor: pointer; }
 .empty { color: var(--muted); padding: 6px 0; }
@@ -162,6 +175,7 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
   <div class="spacer"></div>
   <div class="ctl">
     <input type="search" id="q" placeholder="filter (title, lane, branch, PR)…" size="26">
+    <span style="position:relative"><input type="search" id="tq" placeholder="search thread contents…  ( / )" size="26" autocomplete="off"><div id="sres" class="sres"></div></span>
     <span id="chips" class="ctl"></span>
     <label class="chk"><input type="checkbox" id="show-archived"> archived</label>
   </div>
@@ -708,12 +722,25 @@ function md(text, s) {
   return box.outerHTML;
 }
 const threadCache = {};  // sid -> {key, html}
-async function loadThread(s, limit) {
-  const key = `${s.last}|${limit}`;
+let focusIdx = null;  // a search hit to scroll to once the thread renders
+function applyFocus() {
+  if (focusIdx === null) return;
+  const el = document.querySelector(`#dthread [data-idx="${focusIdx}"]`);
+  if (!el) return;
+  focusIdx = null;
+  el.scrollIntoView({ block: 'center' });
+  el.classList.add('flash');
+}
+let loadSeq = 0;
+async function loadThread(s, limit, around) {
+  const mySeq = ++loadSeq;
+  let key = `${s.last}|${limit}`;
   const el = $('#dthread'); if (!el) return;
-  if (threadCache[s.sid]?.key === key) { if (el.dataset.key !== key) { el.innerHTML = threadCache[s.sid].html; el.dataset.key = key; } return; }
+  if (around === undefined && threadCache[s.sid]?.key === key) { if (el.dataset.key !== key) { el.innerHTML = threadCache[s.sid].html; el.dataset.key = key; } applyFocus(); return; }
   let th;
-  try { const r = await fetch(`/api/thread?sid=${encodeURIComponent(s.sid)}&limit=${limit}`); th = r.ok ? await r.json() : null; } catch (e) { th = null; }
+  try { const r = await fetch(`/api/thread?sid=${encodeURIComponent(s.sid)}&limit=${limit}${around !== undefined ? '&around=' + around : ''}`); th = r.ok ? await r.json() : null; } catch (e) { th = null; }
+  if (mySeq !== loadSeq) return;  // a newer load (e.g. jump to a search hit) superseded this one
+  if (th && th.limit !== limit) { limit = th.limit; $('#drawer').dataset.limit = limit; key = `${s.last}|${limit}`; }
   if (!th) { el.innerHTML = '<div class="empty">no transcript</div>'; return; }
   const parts = [];
   const hidden = th.total - th.items.length;
@@ -722,8 +749,8 @@ async function loadThread(s, limit) {
     parts.push(`<div class="msg-gap"><button class="btn-link" onclick="$('#drawer').dataset.limit=${limit + 80};loadThread(S.sMap['${s.sid}'], ${limit + 80})">··· ${hidden} earlier items · show 80 more</button></div>`);
   }
   for (const it of th.items) {
-    if (it.role === 'user') parts.push(`<div class="msg-user"><div class="msg-meta">you · ${fmtTime(it.t)}</div>${md(it.text, s)}</div>`);
-    else if (it.role === 'assistant') parts.push(`<div class="msg-asst">${md(it.text, s)}</div>`);
+    if (it.role === 'user') parts.push(`<div class="msg-user" data-idx="${it.idx}"><div class="msg-meta">you · ${fmtTime(it.t)}</div>${md(it.text, s)}</div>`);
+    else if (it.role === 'assistant') parts.push(`<div class="msg-asst" data-idx="${it.idx}">${md(it.text, s)}</div>`);
     else {
       const names = [...new Set(it.calls.map(c => c[0]))].slice(0, 5).join(' · ');
       const n = it.calls.length + (it.more || 0);
@@ -732,9 +759,14 @@ async function loadThread(s, limit) {
   }
   const html = `<div class="thread">${parts.join('')}</div>`;
   threadCache[s.sid] = { key, html };
-  if (openSid === s.sid) { el.innerHTML = html; el.dataset.key = key; }
+  if (openSid === s.sid) { el.innerHTML = html; el.dataset.key = key; applyFocus(); }
 }
 
+function openDrawerAt(sid, idx) {
+  openDrawer(sid);
+  focusIdx = idx;
+  loadThread(S.sMap[sid], +$('#drawer').dataset.limit, idx);
+}
 function openDrawer(sid, keepScroll) {
   const s = S.sMap[sid]; if (!s) return;
   const d = $('#drawer');
@@ -773,6 +805,28 @@ $('#ranges').onclick = e => {
   document.querySelectorAll('#ranges button').forEach(b => b.classList.toggle('on', +b.dataset.d === d));
   refreshLoad();
 };
+// ---------------------------------------------------------------- thread content search (FTS5 on the server)
+let searchSeq = 0, searchTimer = null;
+const markSnip = t => esc(t).replace(/\u0002/g, '<mark>').replace(/\u0003/g, '</mark>');
+async function runSearch() {
+  const q = $('#tq').value.trim(), box = $('#sres'), seq = ++searchSeq;
+  if (q.length < 2) { box.classList.remove('open'); return; }
+  let groups = [];
+  try { groups = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); } catch (e) {}
+  if (seq !== searchSeq) return;
+  groups = groups.filter(g => S.sMap[g.sid]);
+  box.innerHTML = groups.length ? groups.map(g => {
+    const s = S.sMap[g.sid], st = sessionState(s);
+    return `<div class="g"><div class="gh"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="x">${esc(s.title)}</span><span class="when">${g.n} hit${g.n > 1 ? 's' : ''} · ${ago(s.last)}</span>${claudeLink(s)}</div>` +
+      g.hits.map(h => `<a class="hit" onclick="openDrawerAt('${g.sid}', ${h.idx}); $('#sres').classList.remove('open')"><span class="who">${h.role === 'user' ? 'you' : 'claude'} · ${fmtTime(h.t)}</span>${markSnip(h.snippet)}</a>`).join('') + '</div>';
+  }).join('') : '<div class="empty" style="padding:8px 10px">no matches</div>';
+  box.classList.add('open');
+}
+$('#tq').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 180); };
+$('#tq').onfocus = () => { if ($('#tq').value.trim().length >= 2) runSearch(); };
+$('#tq').onkeydown = e => { if (e.key === 'Escape') { $('#sres').classList.remove('open'); e.target.blur(); } };
+document.addEventListener('click', e => { if (!e.target.closest('#sres, #tq')) $('#sres').classList.remove('open'); });
+document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); $('#tq').focus(); } });
 $('#q').oninput = e => { query = e.target.value.toLowerCase().trim(); render(); };
 $('#chips').onclick = e => {
   const b = e.target.closest('.chip'); if (!b) return;

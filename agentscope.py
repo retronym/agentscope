@@ -208,12 +208,9 @@ def _tool_summary(blk):
     return name, str(detail).strip().splitlines()[0][:140] if detail else ""
 
 
-def read_thread(sid, limit=60):
-    """The session's conversation as display items: user prompts, assistant text, and runs of tool calls collapsed."""
-    with _index_lock:
-        path = next((p for p, e in _index.items() if e["d"]["sid"] == sid), None)
-    if not path:
-        return None
+def thread_items(path):
+    """A transcript as display items: user prompts, assistant text, and runs of tool calls collapsed.
+    An item's position in this list is its `idx`, shared by the thread view and the search index."""
     items = []
     for line in open(path, errors="replace"):
         try:
@@ -239,11 +236,83 @@ def read_thread(sid, limit=60):
                         items[-1]["t1"] = t
                     else:
                         items.append(dict(role="tools", t=t, t1=t, calls=[_tool_summary(blk)]))
+    for i, it in enumerate(items):
+        it["idx"] = i
+    return items
+
+
+def _path_of(sid):
+    with _index_lock:
+        return next((p for p, e in _index.items() if e["d"]["sid"] == sid), None)
+
+
+def read_thread(sid, limit=60, around=None):
+    """The last `limit` items, extended back far enough to include item `around` (a search hit) if given."""
+    path = _path_of(sid)
+    if not path:
+        return None
+    items = thread_items(path)
     for it in items:
         if it["role"] == "tools" and len(it["calls"]) > 40:
             it["more"] = len(it["calls"]) - 40
             it["calls"] = it["calls"][-40:]
-    return dict(total=len(items), items=items[-limit:])
+    if around is not None:
+        limit = max(limit, len(items) - around + 6)
+    return dict(total=len(items), limit=limit, items=items[-limit:])
+
+
+# ---------------------------------------------------------------------------------------------
+# Full-text search over prompts and agent messages (SQLite FTS5)
+
+def fts_refresh(paths_and_keys):
+    """(Re)index transcripts whose content key changed since they were last indexed."""
+    with db() as c:
+        done = dict(c.execute("SELECT path, key FROM fts_file"))
+    n = 0
+    for path, key, sid in paths_and_keys:
+        k = json.dumps(key)
+        if done.get(path) == k:
+            continue
+        try:
+            rows = [(it["text"], sid, it["role"], it["t"], it["idx"]) for it in thread_items(path) if it["role"] != "tools"]
+        except OSError:
+            continue
+        with db() as c:
+            c.execute("DELETE FROM msg_fts WHERE sid = ?", (sid,))
+            c.executemany("INSERT INTO msg_fts (text, sid, role, t, idx) VALUES (?,?,?,?,?)", rows)
+            c.execute("INSERT OR REPLACE INTO fts_file VALUES (?,?)", (path, k))
+        n += 1
+    return n
+
+
+def fts_query(q):
+    """User text -> FTS5 query: every term required, quoted (so punctuation is literal), last one a prefix."""
+    toks = re.findall(r'"[^"]+"|\S+', q)
+    out = []
+    for i, t in enumerate(toks):
+        quoted = t.startswith('"')
+        term = '"' + t.strip('"').replace('"', '""') + '"'
+        out.append(term + ("*" if i == len(toks) - 1 and not quoted else ""))
+    return " ".join(out)
+
+
+def search(q, per_session=3, sessions=30):
+    fq = fts_query(q)
+    if not fq:
+        return []
+    with db() as c:
+        try:
+            rows = c.execute("""SELECT sid, role, t, idx, snippet(msg_fts, 0, char(2), char(3), '…', 24), bm25(msg_fts)
+                                FROM msg_fts WHERE msg_fts MATCH ? ORDER BY bm25(msg_fts) LIMIT 400""", (fq,)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    by = collections.OrderedDict()
+    for sid, role, t, idx, snip, rank in rows:
+        g = by.setdefault(sid, dict(sid=sid, best=rank, n=0, hits=[]))
+        g["n"] += 1
+        if len(g["hits"]) < per_session:
+            g["hits"].append(dict(role=role, t=t, idx=idx, snippet=snip))
+    return list(by.values())[:sessions]
 
 
 def refresh_index():
@@ -279,6 +348,11 @@ def refresh_index():
     for p in list(_index):
         if p not in seen:
             del _index[p]
+    with _index_lock:
+        todo = [(p, e["key"], e["d"]["sid"]) for p, e in _index.items()]
+    n = fts_refresh(todo)
+    if n:
+        print(f"search-indexed {n} transcripts")
     if changed:
         tmp = INDEX_FILE + ".tmp"
         json.dump(dict(v=INDEX_VERSION, files=_index), open(tmp, "w"))
@@ -394,6 +468,8 @@ CREATE TABLE IF NOT EXISTS proc (
 CREATE INDEX IF NOT EXISTS proc_sid ON proc (sid, last_t);
 CREATE TABLE IF NOT EXISTS proc_minute (t INTEGER NOT NULL, proc_id INTEGER NOT NULL, cpu REAL, rss INTEGER, PRIMARY KEY (proc_id, t)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS proc_minute_t ON proc_minute (t);
+CREATE VIRTUAL TABLE IF NOT EXISTS msg_fts USING fts5(text, sid UNINDEXED, role UNINDEXED, t UNINDEXED, idx UNINDEXED, tokenize='porter unicode61');
+CREATE TABLE IF NOT EXISTS fts_file (path TEXT PRIMARY KEY, key TEXT);
 """
 
 
@@ -931,8 +1007,11 @@ def serve(port):
                 elif path == "/api/state":
                     self._send(200, json.dumps(build_state(sampler)), "application/json")
                 elif path == "/api/thread":
-                    th = read_thread(q.get("sid", ""), int(q.get("limit", 60)))
+                    th = read_thread(q.get("sid", ""), int(q.get("limit", 60)), int(q["around"]) if q.get("around") else None)
                     self._send(200 if th else 404, json.dumps(th), "application/json")
+                elif path == "/api/search":
+                    from urllib.parse import unquote_plus
+                    self._send(200, json.dumps(search(unquote_plus(q.get("q", "")))), "application/json")
                 elif path == "/api/procs":
                     self._send(200, json.dumps(session_procs(q.get("sid", ""), float(q.get("since", 0)))), "application/json")
                 elif path == "/api/top":
