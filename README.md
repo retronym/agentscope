@@ -40,7 +40,9 @@ When you want more than counters, an expanded row can take a snapshot, which doe
 - **Threads:** two thread dumps a second apart, so every thread comes with what it's doing and how much CPU it used in that second. Threads are grouped by name (`pool-*-thread-*`), busiest first, with deadlocks called out and idle threads hidden until you ask.
 - **Heap**, **Class histogram** (asks first: it pauses the JVM to walk the heap) and **Native memory** (when the JVM runs with `-XX:NativeMemoryTracking`).
 
-Continuous profiling (opt-in JFR recording, flame graphs, thread timelines) is designed in [docs/jvm-profiler.md](docs/jvm-profiler.md) and not built yet.
+**Record** in the header turns on continuous profiling: every JVM in scope (agent JVMs, or all of yours) gets a low-overhead JFR recording, picked up as it starts, and the button pulses until you stop it. A JVM's full view (⤢) then shows a sub-second CPU heatmap, one lane per thread coloured by what it's doing (on CPU, in native code, parked, blocked on a lock), and a flame graph of CPU, native, allocation, lock or park time. Drag across the heatmap or lanes to pick a range, click a thread's name to see only that thread, click a frame to zoom. You can also record a single JVM from its full view. Recordings stop when you press Stop or quit agentscope. How much they cost is measured, not guessed: on a javac workload, CPU per compile was the same with and without the recording, within noise (`mise run bench-overhead`). The first recording in a JVM costs a moment of JFR start-up.
+
+The design and what's next (profiles across JVMs, async-profiler captures) are in [docs/jvm-profiler.md](docs/jvm-profiler.md).
 
 ### Timeline
 

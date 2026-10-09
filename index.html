@@ -203,6 +203,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <link rel="stylesheet" href="static/jvm.css">
 <script src="static/jvm.js"></script>
+<script src="static/profile.js"></script>
 </head>
 <body>
 <div id="demo-banner" class="demo-banner" hidden>
@@ -220,6 +221,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
   <div class="ctl">
     <input type="search" id="q" placeholder="filter (title, lane, branch, PR)…" size="26">
     <span style="position:relative"><input type="search" id="tq" placeholder="search thread contents…  ( / )" size="26" autocomplete="off"><div id="sres" class="sres"></div></span>
+    <span id="rec" class="ctl"></span>
     <span id="chips" class="ctl"></span>
     <label class="chk"><input type="checkbox" id="show-archived"> archived</label>
   </div>
@@ -416,7 +418,7 @@ function render() {
   $('#t-prs').textContent = `${open.length} · ${open.filter(p => p.ci === 'FAILURE' || p.ci === 'ERROR').length}`;
   $('#updated').innerHTML = (S.gh_err ? `<span class="err" title="${esc(S.gh_err)}">GitHub error</span> · ` : '') +
     (S.gh_t ? 'GitHub ' + ago(S.gh_t) : 'GitHub loading…') + (S.index_ready ? '' : ' · indexing transcripts…');
-  renderChips(); renderCrumbs();
+  renderChips(); renderCrumbs(); renderRecord();
   document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
   renderMachine(); renderCards(); renderJvms(); renderTimeline(); renderEnds();
   if (openSid && S.sMap[openSid]) openDrawer(openSid, true);

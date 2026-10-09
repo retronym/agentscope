@@ -19,11 +19,11 @@ group, and per-minute samples of each non-trivial process (what ran, under which
 Usage: python3 agentscope.py [--port 8377]   then open http://localhost:8377
        AGENTSCOPE_SYSTEM_HINTS="MyAntivirus:mdm-agent" python3 agentscope.py   # extra "system / security" processes
 """
-import argparse, collections, glob, json, os, re, sqlite3, subprocess, threading, time, traceback
+import argparse, atexit, collections, glob, json, os, re, signal, sqlite3, subprocess, sys, threading, time, traceback
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
-import helper, jvm
+import helper, jvm, recording
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
@@ -571,6 +571,7 @@ class Sampler:
         self._cwd_cache = {}  # pid -> cwd (pids are not reused quickly enough to matter here)
         self.sticky = {}  # pid -> (sid, how): a daemonized child keeps the session it was first seen under
         self.jvms = jvm.JvmTracker(db)
+        self.recorder = None  # set by serve(): recording only runs in the server
 
     def attribute(self, procs, live, meta_by_cli, mentions):
         claude_pids = {pid: j for pid, j in live.items() if pid in procs}
@@ -688,6 +689,8 @@ class Sampler:
         self._persist(now, sess, buckets, orphans)
         try:
             self.jvms.sample(now, procs, cpu_of, owner)
+            if self.recorder:
+                self.recorder.reconcile()
         except Exception:
             traceback.print_exc()
 
@@ -987,7 +990,8 @@ def build_state(sampler):
     for s in sessions:
         for p in s["proposals"]:
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
-    return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), jvm_helper=_helper.unavailable(), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+    return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), jvm_helper=_helper.unavailable(),
+                record=sampler.recorder.state(time.time()) if sampler.recorder else None, claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -1008,7 +1012,7 @@ def _memsize():
 # HTTP
 
 _helper = helper.Helper()
-STATIC = ("static/jvm.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
+STATIC = ("static/jvm.js", "static/profile.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
@@ -1021,6 +1025,9 @@ def serve(port):
         sess = {k: v for k, v in r["s"].items() if not k.startswith("@")}
         buckets = {k[1:]: v for k, v in r["s"].items() if k.startswith("@")}
         sampler.hist.append((r["t"], sess, buckets))
+    sampler.recorder = recording.Recorder(sampler.jvms, _helper, os.path.join(os.path.dirname(DB_FILE), "recording.json"))  # beside the db: a dev copy keeps its own
+    atexit.register(sampler.recorder.stop_all)
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # run atexit (stop recordings) on kill, too
     threading.Thread(target=sampler.loop, args=(meta_cached,), daemon=True).start()
     threading.Thread(target=gh_loop, daemon=True).start()
 
@@ -1071,10 +1078,22 @@ def serve(port):
                     self._send(200, open(os.path.join(HERE, path[1:])).read(), ("text/css" if path.endswith(".css") else "text/javascript") + "; charset=utf-8")
                 elif path == "/api/jvm":
                     self._send(200, json.dumps(jvm.history(db, int(q.get("id", 0)), float(q.get("since", time.time() - 3 * 3600)))), "application/json")
+                elif path == "/api/jvm/summary":
+                    pid = sampler.recorder.pid_of(int(q.get("id", 0)))
+                    r = _helper.call("summary", pid=pid, since=int(float(q.get("since", 0)) * 1000), bins=int(q.get("bins", 300)))
+                    self._send(200, json.dumps(r["summary"]), "application/json")
+                elif path == "/api/jvm/flame":
+                    pid = sampler.recorder.pid_of(int(q.get("id", 0)))
+                    threads = [int(x) for x in q.get("threads", "").split(",") if x.lstrip("-").isdigit()]
+                    r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
+                                     kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1")
+                    self._send(200, json.dumps(r["flame"]), "application/json")
                 elif path == "/api/load":
                     self._send(200, json.dumps(load_history(float(q.get("since", time.time() - 86400)))), "application/json")
                 else:
                     self._send(404, "not found", "text/plain")
+            except (ValueError, RuntimeError) as e:
+                self._send(400, json.dumps(dict(error=str(e))), "application/json")
             except Exception:
                 self._send(500, traceback.format_exc(), "text/plain")
 
@@ -1090,6 +1109,12 @@ def serve(port):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                 if self.path == "/api/jvm/snapshot":
                     self._send(200, json.dumps(jvm.snapshot(sampler.jvms, _helper, int(body.get("id", 0)), str(body.get("kind")))), "application/json")
+                elif self.path == "/api/record":
+                    sampler.recorder.set(bool(body.get("on")), body.get("scope"))
+                    self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")
+                elif self.path == "/api/jvm/record":
+                    sampler.recorder.set_jvm(int(body.get("id", 0)), bool(body.get("on")))
+                    self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")
                 else:
                     self._send(404, "not found", "text/plain")
             except (ValueError, RuntimeError) as e:

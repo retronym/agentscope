@@ -24,6 +24,8 @@ class Helper:
         self.ids = itertools.count(1)
         self.pending = {}  # id -> [event, response]
         self.last_used = 0
+        self.gen = 0  # bumped on every (re)start: state the helper held, like followed recordings, is gone
+        self.keepalive = lambda: False  # e.g. while recordings are being followed
 
     def unavailable(self):
         """Why the helper can't run, or None."""
@@ -34,6 +36,7 @@ class Helper:
         return None
 
     def _start(self):
+        self.gen += 1
         self.proc = subprocess.Popen([java(), "-Xmx128m", "-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1", "-jar", self.jar],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
@@ -56,7 +59,7 @@ class Helper:
         while proc.poll() is None:
             time.sleep(10)
             with self.lock:
-                if self.proc is proc and not self.pending and time.time() - self.last_used > IDLE_EXIT:
+                if self.proc is proc and not self.pending and not self.keepalive() and time.time() - self.last_used > IDLE_EXIT:
                     proc.stdin.close()
                     self.proc = None
 

@@ -44,7 +44,7 @@ function jvmRows(list, withSession, inline) {
     const s = j.sid && S.sMap[j.sid], open = inline && openJvms.has(j.id);
     const who = withSession ? `<td class="who">${s ? `<a href="#" onclick="event.stopPropagation();openDrawer('${s.sid}');return false" style="text-decoration:none"><span class="lane-chip">${esc(s.lane)}</span> ${esc(s.title)}</a>${j.how && j.how !== 'tree' ? ` <span class="sub" title="attributed by ${esc(j.how)}">⌁</span>` : ''}` : '<span class="dim">no session</span>'}</td>` : '';
     return `<tr class="jr ${open ? 'open' : ''}" onclick="${inline ? 'toggleJvm' : 'openJvmBox'}(${j.id})" title="${esc(j.main || '')}">
-      <td><b>${esc(j.label)}</b> <span class="sub">${j.pid}</span><div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div></td>${who}
+      <td><b>${esc(j.label)}</b> <span class="sub">${j.pid}</span> ${recDot(j)}<div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div></td>${who}
       <td class="num">${uptime(j.start)}</td>
       <td class="num">${cores(j.cpu)} ${jvmSpark(j, 1, 'var(--s1)', 56, 16, 100)}</td>
       <td>${heapBar(j)} <span class="sub">${mb(j.heap_used)} / ${mb(j.heap_max)}</span></td>
@@ -139,7 +139,7 @@ function renderJvmBox() {
     box = document.createElement('div');
     box.id = 'jvmbox';
     box.className = 'jbox';
-    box.innerHTML = '<div class="jbox-panel"><button class="close" title="close (Esc)" onclick="closeJvmBox()">✕</button><div class="jbox-body"></div></div>';
+    box.innerHTML = '<div class="jbox-panel"><button class="close" title="close (Esc)" onclick="closeJvmBox()">✕</button><div class="jbox-body"><div class="jbox-main"></div><div class="jbox-prof"></div><div class="jbox-detail"></div></div></div>';
     box.onclick = e => { if (e.target === box) closeJvmBox(); };
     document.body.appendChild(box);
   }
@@ -147,15 +147,19 @@ function renderJvmBox() {
   box.classList.toggle('open', boxId != null);
   document.body.classList.toggle('jbox-open', boxId != null);
   if (boxId == null) return;
-  const body = box.querySelector('.jbox-body');
-  if (!j) { patch(body, '<div class="empty">this JVM is no longer running</div>'); return; }
+  const body = box.querySelector('.jbox-main');
+  // a JVM that exited can still have a recorded profile worth looking at
+  if (!j) { patch(body, '<div class="empty">this JVM is no longer running</div>'); patch(box.querySelector('.jbox-detail'), ''); return; }
   const s = j.sid && S.sMap[j.sid];
   patch(body, `<div class="jbox-head"><h2>☕ ${esc(j.label)} <span class="sub">${j.pid}</span></h2>
       <div class="row">${s ? `<a href="#" class="lane-chip" onclick="closeJvmBox();openDrawer('${s.sid}');return false">${esc(s.lane)} · ${esc(s.title)}</a>` : '<span class="dim">no session</span>'}
         <span class="sub">${esc(j.version)} · ${esc(j.gc || '?')} · up ${uptime(j.start)}</span>${jvmFlags(j)}</div>
       <div class="jbox-stats"><span><b>${cores(j.cpu)}</b> cores ${jvmSpark(j, 1, 'var(--s1)', 80, 18, 100)}</span><span>${heapBar(j, 140)} <b>${mb(j.heap_used)}</b> / ${mb(j.heap_max)} heap</span>
-        <span>GC <b>${pct(j.gc_pct)}</b></span><span>alloc ≈ <b>${rate(j.alloc)}</b></span><span><b>${j.threads}</b> threads</span><span><b>${(j.classes / 1000).toFixed(0)}k</b> classes</span></div></div>
-    ${jvmDetail(j, true)}`);
+        <span>GC <b>${pct(j.gc_pct)}</b></span><span>alloc ≈ <b>${rate(j.alloc)}</b></span><span><b>${j.threads}</b> threads</span><span><b>${(j.classes / 1000).toFixed(0)}k</b> classes</span></div></div>`);
+  // three regions, patched separately so the profile's canvases survive the 5-second refresh
+  patch(box.querySelector('.jbox-prof'), profileSection(j));
+  patch(box.querySelector('.jbox-detail'), jvmDetail(j, true));
+  loadProfile(j.id);
 }
 // Esc closes the full-size view before anything else (the side panel's own Esc handler runs later, in bubbling order)
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && boxId != null) { e.stopImmediatePropagation(); closeJvmBox(); } }, true);

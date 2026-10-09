@@ -1,6 +1,6 @@
 # Design: a built-in JVM profiler
 
-Status: phases 1 (JVM top) and 2 (helper and snapshots) are done; the rest is a proposal.
+Status: phases 1 (JVM top), 2 (helper and snapshots) and 3 (continuous JFR) are done; the rest is a proposal.
 
 ## Problem
 
@@ -80,9 +80,10 @@ Our `agentscope.jfc` starts from the JDK's `default.jfc` (designed for continuou
 | `jdk.GarbageCollection`, `jdk.GCPhasePause`, `jdk.GCHeapSummary` | on | GC pauses and heap over time |
 | `jdk.ObjectAllocationSample` | throttled to 50/s | allocation flame graph, near-free |
 | `jdk.JavaMonitorEnter`, `jdk.ThreadPark` | ≥ 20 ms | contention |
-| `jdk.SafepointBegin` | ≥ 10 ms | long safepoints only |
 
-Everything else is off, notably `jdk.OldObjectSample`, TLAB allocation events, class loading, and socket/file I/O events. Recording options: `disk=true maxage=30m maxsize=250m`. The overhead claim gets measured, not assumed: phase 3 includes running a Scala compile benchmark with and without the recording.
+Everything else is off, notably `jdk.OldObjectSample`, TLAB allocation events, class loading, and socket/file I/O events. A settings file that lists only these leaves every other event off on any JDK (checked with `JFR.check verbose=true`), so one small file serves all versions. Recording options: `disk=true maxage=30m maxsize=250m`.
+
+Measured, not assumed: `mise run bench-overhead` runs javac in a loop in a child JVM and alternates 30-second windows with and without the recording, followed live as the helper does. On this machine (shared with a dozen agent sessions), 10 pairs of 15-second windows gave a median of 182.7 ms of CPU per compile without the recording and 181.4 ms with it: no difference above the noise. Throughput per window swung by ±20% with the machine's other load, which is why the benchmark reports CPU per compile. The one visible cost is a one-off: the first window after JFR's very first start in a JVM used about twice the CPU per compile while JFR initialized itself.
 
 ### 7. Turning stacks into "what is it doing": an activity classifier
 
@@ -143,7 +144,10 @@ Each phase is usable on its own.
   - `InputStream.readAllBytes()` on the attach socket stream returns only the first 8 KiB (JDK 21.0.12, macOS); reading into the start of a buffer in a loop, as `jcmd` does, gets everything. It silently truncated thread dumps past the first dozen threads.
   - jackson-jr leaves out null fields, so the page treats every optional thread field as possibly absent.
   - The helper is a JVM too, and shows up in the list as *agentscope helper*.
-- **TODO 3. Continuous JFR (tier 1).** `agentscope.jfc` and its measured overhead; the **Record** button and per-JVM toggle; the Java helper tailing repositories; thread lanes and per-thread CPU; flame graph and heatmap for a range in the JVM panel.
+- **DONE 3. Continuous JFR (tier 1).** `agentscope.jfc` (embedded in the helper, written to a temp file for the target to read). The helper's `Recordings` starts or adopts an `agentscope` recording, finds its repository via `JFR.configure`, and follows it with `EventStream.openRepository` into a `Profile`: interned frames and stacks, samples in parallel primitive arrays, 30 minutes kept, and still browsable after Stop or after the JVM exits. Queries: `summary` (per-thread lanes, a 20-slot sub-second heatmap, GC pauses, at most 300 time bins) and `flame` (a tree for a range, by kind, optionally one thread, folding nodes under 0.2%). `recording.py`: the Record switch and scope, per-JVM overrides, picking up JVMs in scope once they've been up 5 s (JDK 14+), stopping everything on Stop and on exit (SIGTERM included), and stopping a crash's leftovers on the next start (pids kept beside the database). `static/profile.js`: the pulsing **Record** button with elapsed time and JVM count, a dot on recording rows, and in the full JVM view a heatmap, thread lanes and a flame graph, linked by brushing a range; click a lane's name to see only that thread, click a frame to zoom. Tests record a child JVM and read it back while it runs. Learned along the way:
+  - JFR's sampler hardly sees a thread spinning in a tight loop: 5 execution samples in 5 seconds, where calls and allocation in the loop give the expected ~50/s. It mostly fails to walk a stack whose PC sits in compiled loop code without debug info. Real workloads sample fine, but it's a bias to know about, and one reason for async-profiler in phase 5.
+  - `jdk.ThreadCPULoad`'s user and system are fractions of the whole machine, not of a core: multiply by the CPU count.
+  - Global Record on this machine picked up 6 JVMs within one sampler tick, and after Stop none had an `agentscope` recording left.
 - **TODO 4. Across JVMs.** Aggregates into SQLite; session-rooted machine-wide flame graph; activity classifier and the card summary.
 - **TODO 5. Captures (tier 2).** async-profiler start/stop with `--jfrsync`; capture list; open in asprof's HTML; diff.
 
@@ -162,7 +166,8 @@ Before phase 3: a spike that a JDK 21 consumer can tail repositories written by 
 Small files, one concern each:
 
 - `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, snapshots. `helper.py`: the helper process. Both imported by `agentscope.py`.
-- `static/jvm.js`: JVMs tab, JVM panel, Record button, flame graph, heatmap, thread lanes (split further if it grows).
+- `recording.py`: the Record switch, scope and per-JVM recordings.
+- `static/jvm.js`: the JVMs section, full view and snapshots. `static/profile.js`: the Record button, heatmap, thread lanes and flame graph.
 - `profiler/`: the Maven project (`pom.xml`, `mvnw`, `src/main/java/...`, `src/main/resources/agentscope.jfc`), building `profiler/target/agentscope-profiler.jar`.
 
 ## Resolved questions

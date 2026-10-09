@@ -74,3 +74,23 @@ body.jbox-open { overflow: hidden; }
 .jbox .snap pre { max-height: none; }
 @media (max-width: 700px) { .jbox { padding: 0; } .jbox-panel { border-radius: 0; } .jbox-body { padding: 16px; } }
 .jbox .snap .deadlock pre { max-height: 260px; }
+/* Record button and profile */
+.recbtn { display: inline-flex; align-items: center; gap: 7px; font-weight: 500; }
+.recbtn i { width: 9px; height: 9px; border-radius: 50%; background: var(--critical); opacity: .55; }
+.recbtn.on { border-color: color-mix(in srgb, var(--critical) 60%, transparent); color: var(--critical); background: color-mix(in srgb, var(--critical) 8%, var(--surface)); font-variant-numeric: tabular-nums; }
+.recbtn.on i { opacity: 1; animation: recpulse 1.6s ease-in-out infinite; }
+@keyframes recpulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--critical) 60%, transparent); } 50% { box-shadow: 0 0 0 5px transparent; } }
+.recbtn:disabled { opacity: .5; cursor: default; }
+.recscope { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 3px 4px; }
+.recdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--critical); animation: recpulse 1.6s ease-in-out infinite; vertical-align: middle; }
+.jbox-prof { margin: 4px 0 18px; }
+.profh, .flameh { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; margin: 6px 0; }
+.profh .btn-link { font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; font-size: 12px; padding: 3px 9px; background: var(--surface); color: var(--ink-2); }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--ink); color: var(--page); }
+.profc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.profc canvas { display: block; cursor: crosshair; }
+.profc canvas[id^="flame"] { cursor: pointer; }
+.flameh { margin-top: 12px; }

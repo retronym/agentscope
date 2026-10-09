@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  agentscope's continuous recording: only what the JVM view shows. Events not listed here stay off (whatever the JDK),
+  so this file works unchanged across JDK versions. Starts from the spirit of the JDK's default.jfc (made for always-on
+  production use) and trims further.
+-->
+<configuration version="2.0" label="agentscope" description="Low-overhead continuous profiling for agentscope" provider="agentscope">
+  <!-- on-CPU Java stacks: flame graphs, heatmap, thread lanes -->
+  <event name="jdk.ExecutionSample"><setting name="enabled">true</setting><setting name="period">20 ms</setting></event>
+  <!-- threads in native code (I/O, zip, JNI) -->
+  <event name="jdk.NativeMethodSample"><setting name="enabled">true</setting><setting name="period">100 ms</setting></event>
+  <!-- per-thread CPU, for the lanes and top -->
+  <event name="jdk.ThreadCPULoad"><setting name="enabled">true</setting><setting name="period">1 s</setting></event>
+  <!-- GC pauses -->
+  <event name="jdk.GarbageCollection"><setting name="enabled">true</setting><setting name="threshold">0 ms</setting></event>
+  <!-- allocation, throttled: near-free -->
+  <event name="jdk.ObjectAllocationSample"><setting name="enabled">true</setting><setting name="throttle">50/s</setting><setting name="stackTrace">true</setting></event>
+  <!-- contention: only waits long enough to matter -->
+  <event name="jdk.JavaMonitorEnter"><setting name="enabled">true</setting><setting name="threshold">20 ms</setting><setting name="stackTrace">true</setting></event>
+  <event name="jdk.ThreadPark"><setting name="enabled">true</setting><setting name="threshold">20 ms</setting><setting name="stackTrace">true</setting></event>
+</configuration>

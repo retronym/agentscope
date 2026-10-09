@@ -37,3 +37,7 @@ run = "python3 demo/screenshots.py"
 [tasks.build-profiler]
 description = "Build the JVM helper (profiler/target/agentscope-profiler.jar) that takes thread dumps and other snapshots"
 run = "cd profiler && ./mvnw -q -B package"
+
+[tasks.bench-overhead]
+description = "Measure the slowdown agentscope's JFR recording causes on a javac workload (about 7 minutes)"
+run = "cd profiler && ./mvnw -q -B test-compile && java --add-exports jdk.attach/sun.tools.attach=ALL-UNNAMED -cp target/classes:target/test-classes:$(./mvnw -q -B dependency:build-classpath -Dmdep.outputFile=/dev/stdout) agentscope.profiler.OverheadBench 60 15 10"

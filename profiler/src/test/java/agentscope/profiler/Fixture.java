@@ -14,7 +14,9 @@ public final class Fixture {
     CountDownLatch both = new CountDownLatch(2);
     deadlocker("deadlock-a", a, b, both).start();
     deadlocker("deadlock-b", b, a, both).start();
-    Thread spinner = new Thread(() -> { while (true) sink += System.nanoTime() % 7; }, "spinner");
+    // Busy with ordinary work: calls and allocation. (A bare counting loop is nearly invisible to JFR's sampler,
+    // which mostly fails to walk a stack whose PC is inside a tight compiled loop.)
+    Thread spinner = new Thread(() -> { while (true) sink += work(); }, "spinner");
     spinner.setDaemon(true);
     spinner.start();
     AtomicInteger n = new AtomicInteger();
@@ -26,6 +28,12 @@ public final class Fixture {
     System.out.flush();
     Thread.sleep(Long.parseLong(args.length > 0 ? args[0] : "60000"));
     System.exit(0);
+  }
+
+  static int work() {
+    java.util.Map<String, Integer> m = new java.util.HashMap<>();
+    for (int i = 0; i < 2000; i++) m.merge(Integer.toString(i % 97), i, Integer::sum);
+    return m.size();
   }
 
   private static Thread deadlocker(String name, Object first, Object second, CountDownLatch both) {
