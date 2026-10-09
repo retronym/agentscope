@@ -156,9 +156,12 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .sres .g { padding: 8px 10px; border-radius: 8px; }
 .sres .g + .g { border-top: 1px solid var(--border); }
 .sres .gh { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
-.sres .gh .x { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sres .gh .x { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--ink); text-decoration: none; }
+.sres .gh .x:hover { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
 .sres .hit { display: block; padding: 4px 8px; border-radius: 6px; cursor: pointer; color: var(--ink-2); font-size: 12.5px; }
 .sres .hit:hover { background: var(--surface-2); }
+.sres .hit.visited { box-shadow: inset 2px 0 0 var(--accent); }
+.sres .hit.visited .who::after { content: " · seen"; }
 .sres .hit .who { color: var(--muted); font-size: 11px; margin-right: 6px; }
 mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .flash { animation: flash 2.2s ease-out; border-radius: 10px; }
@@ -225,6 +228,16 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 const RANGES = [['24h', 1], ['3d', 3], ['7d', 7], ['30d', 30]];
 let S = null, LOAD = [], range = +(localStore('range') || 3), query = '', showArchived = false;
 
+// Re-render a region without clobbering what the browser holds for the user. Unchanged HTML is left alone
+// (keeps selection, focus, hover); otherwise <details data-k> keep their open state across the rebuild.
+function patch(el, html) {
+  if (!el || el.dataset.html === html) return false;
+  const open = new Set([...el.querySelectorAll('details[data-k]')].filter(d => d.open).map(d => d.dataset.k));
+  el.innerHTML = html;
+  el.dataset.html = html;
+  for (const d of el.querySelectorAll('details[data-k]')) if (open.has(d.dataset.k)) d.open = true;
+  return true;
+}
 function localStore(k, v) { try { if (v === undefined) return localStorage.getItem('as.' + k); localStorage.setItem('as.' + k, v); } catch (e) { return null; } }
 function ago(t) {
   if (!t) return '';
@@ -276,8 +289,8 @@ const CHIPS = [
 let chips = new Set((localStore('chips') || '').split(',').filter(k => CHIPS.some(c => c[0] === k)));
 const chipOK = s => !chips.size || CHIPS.some(([k, , , , f]) => chips.has(k) && f(s));
 function renderChips() {
-  $('#chips').innerHTML = CHIPS.map(([k, l, c, t, f]) =>
-    `<button class="chip ${chips.has(k) ? 'on' : ''}" data-k="${k}" title="${esc(t)}"><i style="background:${c}"></i>${esc(l)} <span class="n">${S ? S.sessions.filter(f).length : ''}</span></button>`).join('');
+  patch($('#chips'), CHIPS.map(([k, l, c, t, f]) =>
+    `<button class="chip ${chips.has(k) ? 'on' : ''}" data-k="${k}" title="${esc(t)}"><i style="background:${c}"></i>${esc(l)} <span class="n">${S ? S.sessions.filter(f).length : ''}</span></button>`).join(''));
 }
 // A PR passes the chips when one of its sessions does.
 const prChipOK = p => !chips.size || (p.sessions || []).some(sid => S.sMap[sid] && chipOK(S.sMap[sid]));
@@ -425,8 +438,8 @@ function renderCards() {
   }).join('') || '<div class="empty">nothing live</div>';
   const cards = $('#cards');
   if (cards.dataset.html !== html) { flip(cards, () => { cards.innerHTML = html; }); cards.dataset.html = html; }
-  $('#orphans').innerHTML = S.orphans.length ? `<div class="panel" style="padding:8px 12px;margin-top:10px"><b>Heavy processes not attributed to any session</b>` +
-    S.orphans.map(o => `<div class="meta" title="${esc(o.args)}">${o.pid} ${esc(o.label)} — ${cores(o.cpu)} cores, ${gb(o.rss)} ${o.cwd ? '· ' + esc(o.cwd) : ''}</div>`).join('') + '</div>' : '';
+  patch($('#orphans'), S.orphans.length ? `<div class="panel" style="padding:8px 12px;margin-top:10px"><b>Heavy processes not attributed to any session</b>` +
+    S.orphans.map(o => `<div class="meta" title="${esc(o.args)}">${o.pid} ${esc(o.label)} — ${cores(o.cpu)} cores, ${gb(o.rss)} ${o.cwd ? '· ' + esc(o.cwd) : ''}</div>`).join('') + '</div>' : '');
 }
 
 // ---------------------------------------------------------------- timeline
@@ -670,7 +683,7 @@ function renderEnds() {
   // 7. unarchived but dead sessions, oldest first: archive or revive
   const stale = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 5 * 86400).sort((a, b) => a.last - b.last);
   groups.push(['🗄 Unarchived, idle > 5 days', stale.map(s => sessItem(s, lk(s.summary?.status_detail || '', s)))]);
-  $('#ends').innerHTML = groups.map(([h, its]) => `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${its.slice(0, 12).join('') || '<div class="empty">none</div>'}${its.length > 12 ? `<div class="empty">+${its.length - 12} more</div>` : ''}</div>`).join('');
+  patch($('#ends'), groups.map(([h, its]) => `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${its.slice(0, 12).join('') || '<div class="empty">none</div>'}${its.length > 12 ? `<div class="empty">+${its.length - 12} more</div>` : ''}</div>`).join(''));
 }
 
 // ---------------------------------------------------------------- drawer
@@ -687,10 +700,10 @@ function drawerMeta(s) {
     ${Object.keys(s.issues).length ? `<div class="k">Issues mentioned</div><div style="display:flex;gap:6px;flex-wrap:wrap">${issueChips(s)}</div>` : ''}
     ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
-    ${s.load ? `<details><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table class="pt">${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
+    ${s.load ? `<details data-k="procs"><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table class="pt">${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
-    <details id="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>
-    <details><summary class="k" style="cursor:pointer">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</summary><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre></details>
+    <details id="phist" data-k="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>
+    <details data-k="resume"><summary class="k" style="cursor:pointer">Resume ${s.local && !s.archived ? '' : '<span style="text-transform:none">(archived or CLI-only: the app link only opens unarchived desktop sessions)</span>'}</summary><pre class="copy" title="click to copy" onclick="navigator.clipboard.writeText(this.textContent)">cd ${esc(s.cwd)} && claude --resume ${esc(s.sid)}</pre></details>
     ${Object.keys(s.pr_mentions).length ? `<div class="k">PRs mentioned in transcript</div><div class="when">${Object.entries(s.pr_mentions).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${ghA(k, 'pull')} ×${n}`).join(' · ')}</div>` : ''}
     <div class="k" style="display:flex;justify-content:space-between;align-items:baseline">Thread <a href="#" class="when" style="text-transform:none" onclick="const b=$('#dbody');b.scrollTop=b.scrollHeight;return false">latest ↓</a></div>`;
 }
@@ -748,12 +761,20 @@ function applyFocus() {
   el.scrollIntoView({ block: 'center' });
   el.classList.add('flash');
 }
+// Swap in new thread HTML: keep expanded tool lists, and if the reader was at the bottom, keep them there.
+function setThread(el, html, key) {
+  const b = $('#dbody'), atBottom = b && b.scrollHeight - b.scrollTop - b.clientHeight < 40 && b.scrollTop > 0;
+  patch(el, html);
+  el.dataset.key = key;
+  if (atBottom && focusIdx === null) b.scrollTop = b.scrollHeight;
+  applyFocus();
+}
 let loadSeq = 0;
 async function loadThread(s, limit, around) {
   const mySeq = ++loadSeq;
   let key = `${s.last}|${limit}`;
   const el = $('#dthread'); if (!el) return;
-  if (around === undefined && threadCache[s.sid]?.key === key) { if (el.dataset.key !== key) { el.innerHTML = threadCache[s.sid].html; el.dataset.key = key; } applyFocus(); return; }
+  if (around === undefined && threadCache[s.sid]?.key === key) { if (el.dataset.key !== key) setThread(el, threadCache[s.sid].html, key); else applyFocus(); return; }
   let th;
   try { const r = await fetch(`/api/thread?sid=${encodeURIComponent(s.sid)}&limit=${limit}${around !== undefined ? '&around=' + around : ''}`); th = r.ok ? await r.json() : null; } catch (e) { th = null; }
   if (mySeq !== loadSeq) return;  // a newer load (e.g. jump to a search hit) superseded this one
@@ -771,12 +792,12 @@ async function loadThread(s, limit, around) {
     else {
       const names = [...new Set(it.calls.map(c => c[0]))].slice(0, 5).join(' · ');
       const n = it.calls.length + (it.more || 0);
-      parts.push(`<details class="msg-tools"><summary>${n} tool call${n > 1 ? 's' : ''} · ${esc(names)}</summary><ol>${it.more ? `<li style="list-style:none">… ${it.more} earlier</li>` : ''}${it.calls.map(c => `<li><b>${esc(c[0])}</b> ${esc(c[1])}</li>`).join('')}</ol></details>`);
+      parts.push(`<details class="msg-tools" data-k="t${it.idx}"><summary>${n} tool call${n > 1 ? 's' : ''} · ${esc(names)}</summary><ol>${it.more ? `<li style="list-style:none">… ${it.more} earlier</li>` : ''}${it.calls.map(c => `<li><b>${esc(c[0])}</b> ${esc(c[1])}</li>`).join('')}</ol></details>`);
     }
   }
   const html = `<div class="thread">${parts.join('')}</div>`;
   threadCache[s.sid] = { key, html };
-  if (openSid === s.sid) { el.innerHTML = html; el.dataset.key = key; applyFocus(); }
+  if (openSid === s.sid) setThread(el, html, key);
 }
 
 // ---------------------------------------------------------------- breadcrumbs: recently viewed sessions (per browser)
@@ -790,10 +811,10 @@ function pushCrumb(sid) {
 function renderCrumbs() {
   const el = $('#crumbs'), live = crumbs.filter(sid => S?.sMap[sid]);
   el.classList.toggle('has', live.length > 0);
-  el.innerHTML = live.length ? `<span class="lbl">recent</span>` + live.map(sid => {
+  patch(el, live.length ? `<span class="lbl">recent</span>` + live.map(sid => {
     const s = S.sMap[sid], st = sessionState(s);
     return `<button class="crumb ${sid === openSid ? 'cur' : ''}" title="${esc(s.lane)} · ${esc(s.title)} · ${esc(st.label)}" onclick="openDrawer('${sid}')"><i style="background:${st.c}"></i><span>${esc(s.title)}</span></button>`;
-  }).join('') + `<button class="crumb" title="clear the trail" onclick="crumbs=[];localStore('crumbs','[]');renderCrumbs()">✕</button>` : '';
+  }).join('') + `<button class="crumb" title="clear the trail" onclick="crumbs=[];localStore('crumbs','[]');renderCrumbs()">✕</button>` : '');
 }
 
 function openDrawerAt(sid, idx) {
@@ -813,9 +834,7 @@ function openDrawer(sid, keepScroll) {
     d.dataset.limit = 60;
   }
   const scroll = $('#dbody').scrollTop;
-  const wasOpen = [...d.querySelectorAll('#dmeta details[id]')].filter(e => e.open).map(e => e.id);
-  $('#dmeta').innerHTML = drawerMeta(s);
-  for (const id of wasOpen) { const e = document.getElementById(id); if (e) e.open = true; }
+  patch($('#dmeta'), drawerMeta(s));
   loadThread(s, +d.dataset.limit);
   d.classList.add('open');
   $('#dbody').scrollTop = fresh ? 0 : scroll;
@@ -886,22 +905,45 @@ $('#ranges').onclick = e => {
 // ---------------------------------------------------------------- thread content search (FTS5 on the server)
 let searchSeq = 0, searchTimer = null;
 const markSnip = t => esc(t).replace(/\u0002/g, '<mark>').replace(/\u0003/g, '</mark>');
+let lastQuery = null;
+const visited = new Set();  // "sid:idx" of hits opened for the current query
 async function runSearch() {
   const q = $('#tq').value.trim(), box = $('#sres'), seq = ++searchSeq;
+  try { sessionStorage.setItem('as.tq', q); } catch (e) {}
   if (q.length < 2) { box.classList.remove('open'); return; }
+  if (q === lastQuery && box.dataset.html) { box.classList.add('open'); return; }  // same query: reopen as left (scroll, visited)
+  if (q !== lastQuery) visited.clear();
   let groups = [];
   try { groups = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); } catch (e) {}
   if (seq !== searchSeq) return;
   groups = groups.filter(g => S.sMap[g.sid]);
+  box.scrollTop = 0;
   box.innerHTML = groups.length ? groups.map(g => {
     const s = S.sMap[g.sid], st = sessionState(s);
-    return `<div class="g"><div class="gh"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="x">${esc(s.title)}</span><span class="when">${g.n} hit${g.n > 1 ? 's' : ''} · ${ago(s.last)}</span>${claudeLink(s)}</div>` +
-      g.hits.map(h => `<a class="hit" onclick="openDrawerAt('${g.sid}', ${h.idx}); $('#sres').classList.remove('open')"><span class="who">${h.role === 'user' ? 'you' : 'claude'} · ${fmtTime(h.t)}</span>${markSnip(h.snippet)}</a>`).join('') + '</div>';
+    return `<div class="g"><div class="gh"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><a class="x" title="open this session" onclick="openSessionFromSearch('${g.sid}')">${esc(s.title)}</a><span class="when">${g.n} hit${g.n > 1 ? 's' : ''} · ${ago(s.last)}</span>${claudeLink(s)}</div>` +
+      g.hits.map(h => `<a class="hit ${visited.has(g.sid + ':' + h.idx) ? 'visited' : ''}" data-hit="${g.sid}:${h.idx}" onclick="openHit(this, '${g.sid}', ${h.idx})"><span class="who">${h.role === 'user' ? 'you' : 'claude'} · ${fmtTime(h.t)}</span>${markSnip(h.snippet)}</a>`).join('') + '</div>';
   }).join('') : '<div class="empty" style="padding:8px 10px">no matches</div>';
+  if (seq !== searchSeq) return;
+  const html = box.innerHTML;
+  box.dataset.html = html;
+  lastQuery = q;
   box.classList.add('open');
+}
+function openSessionFromSearch(sid) {
+  $('#sres').classList.remove('open');
+  openDrawer(sid);
+}
+function openHit(a, sid, idx) {
+  visited.add(sid + ':' + idx);
+  a.classList.add('visited');
+  $('#sres').dataset.html = $('#sres').innerHTML;
+  $('#sres').classList.remove('open');
+  openDrawerAt(sid, idx);
 }
 $('#tq').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 180); };
 $('#tq').onfocus = () => { if ($('#tq').value.trim().length >= 2) runSearch(); };
+$('#tq').onclick = () => { if ($('#tq').value.trim().length >= 2) runSearch(); };
+try { $('#tq').value = sessionStorage.getItem('as.tq') || ''; } catch (e) {}  // survives the page's self-reload
 $('#tq').onkeydown = e => { if (e.key === 'Escape') { $('#sres').classList.remove('open'); e.target.blur(); } };
 document.addEventListener('click', e => { if (!e.target.closest('#sres, #tq')) $('#sres').classList.remove('open'); });
 document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); $('#tq').focus(); } });
