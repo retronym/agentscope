@@ -71,7 +71,8 @@ function jvmDetail(j) {
       <span>threads</span><span>${j.threads} (${j.daemon} daemon)</span>
       </div>${j.flags.length ? `<div style="margin-top:6px">${j.flags.map(f => `<div class="sub">⚠ ${esc(JVM_FLAGS[f][2])}</div>`).join('')}</div>` : ''}
       <pre title="main class and JVM options">${esc(j.main)}\n${esc(j.args)}</pre></div>
-    <div id="jh-${j.id}">${h ? jvmChart(h.rows) : '<div class="empty">loading history…</div>'}</div></div>`;
+    <div id="jh-${j.id}">${h ? jvmChart(h.rows) : '<div class="empty">loading history…</div>'}</div></div>
+    ${snapBar(j)}${snapView(j)}`;
 }
 
 async function toggleJvm(id) {
@@ -138,4 +139,92 @@ function jvmEndsGroup() {
       `<div class="b">${j.flags.map(f => esc(JVM_FLAGS[f][2])).join(' · ')}${s ? ' · session: ' + esc(s.title) : ' · no session'}</div></div>`;
   });
   return ['☕ JVMs in trouble', items];
+}
+
+// ---------------------------------------------------------------- snapshots (through the Java helper, on demand)
+const SNAPS = [  // kind, button, what it costs the JVM
+  ['threads', 'Threads', 'two thread dumps a second apart (two brief safepoints): what every thread is doing, and its CPU over that second'],
+  ['heap', 'Heap', 'GC.heap_info: regions and spaces of the heap (cheap)'],
+  ['histogram', 'Class histogram', 'GC.class_histogram -all: objects per class. Walks the whole heap at a safepoint: a pause about as long as a full GC'],
+  ['native', 'Native memory', 'VM.native_memory summary: only works when the JVM was started with -XX:NativeMemoryTracking=summary'],
+];
+const jvmSnaps = {};  // jvm id -> {kind, loading, error, data, showIdle, open: Set}
+
+async function takeSnapshot(id, kind) {
+  if (kind === 'histogram' && !confirm('A class histogram pauses this JVM while it walks the whole heap, about as long as a full GC. Take it?')) return;
+  const prev = jvmSnaps[id];
+  jvmSnaps[id] = { kind, loading: true, showIdle: prev?.showIdle, open: prev?.kind === kind ? prev.open : null };
+  rerenderJvms();
+  try {
+    const r = await fetch('/api/jvm/snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, kind }) });
+    const body = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
+    if (!r.ok) throw new Error(body.error || 'HTTP ' + r.status);
+    Object.assign(jvmSnaps[id], { loading: false, data: body });
+  } catch (e) {
+    Object.assign(jvmSnaps[id], { loading: false, error: String(e.message || e) });
+  }
+  rerenderJvms();
+}
+function rerenderJvms() { renderJvms(); if (openDrawerJvms()) openDrawer(openSid, true); }
+
+function snapBar(j) {
+  if (DEMO) return '<div class="snapbar sub">Thread dumps and other snapshots attach to the JVM, so they need the live server.</div>';
+  const why = S.jvm_helper, cur = jvmSnaps[j.id];
+  return `<div class="snapbar">${SNAPS.map(([k, label, cost]) => `<button class="btn-link ${cur?.kind === k ? 'on' : ''}" ${why || cur?.loading ? 'disabled' : ''} title="${esc(cost)}" onclick="event.stopPropagation();takeSnapshot(${j.id},'${k}')">${label}${k === 'histogram' ? ' ⚠' : ''}</button>`).join('')}
+    ${why ? `<span class="sub">${esc(why)}</span>` : cur?.loading ? '<span class="sub">attaching…</span>' : ''}</div>`;
+}
+function snapView(j) {
+  const s = jvmSnaps[j.id];
+  if (!s || s.loading) return '';
+  if (s.error) return `<div class="snap err">${esc(s.error)}</div>`;
+  const d = s.data, when = `<span class="sub">taken ${new Date(d.t * 1000).toLocaleTimeString()} in ${d.took}s</span>`;
+  if (d.kind === 'threads') return `<div class="snap">${threadsView(j.id, d.dump, when)}</div>`;
+  if (d.kind === 'histogram') return `<div class="snap"><div class="snaph">Class histogram · top ${d.rows.length} by size ${when}</div><table class="jt hist"><tr><th class="num">size</th><th class="num">instances</th><th>class</th></tr>${d.rows.map(([n, b, c]) => `<tr><td class="num">${mb(b)}</td><td class="num">${n.toLocaleString()}</td><td>${esc(prettyClass(c))}</td></tr>`).join('')}</table></div>`;
+  return `<div class="snap"><div class="snaph">${esc(SNAPS.find(x => x[0] === d.kind)[1])} ${when}</div><pre>${esc(d.text)}</pre></div>`;
+}
+const PRIM = { B: 'byte', C: 'char', D: 'double', F: 'float', I: 'int', J: 'long', S: 'short', Z: 'boolean' };
+function prettyClass(c) {  // [B -> byte[], [Ljava.lang.String; -> java.lang.String[]
+  const m = /^(\[+)(?:([BCDFIJSZ])|L(.+);)( .*)?$/.exec(c);
+  return m ? (m[2] ? PRIM[m[2]] : m[3]) + '[]'.repeat(m[1].length) + (m[4] || '') : c;
+}
+
+// A thread dump, grouped by thread name with numbering wildcarded, busiest first:
+// pool-3-thread-12 -> pool-*-thread-*, GC Thread#7 -> GC Thread#*, but G1 and C2 keep their digits.
+const threadGroup = name => name.replace(/(?<=[-#_ .])\d+|(?<=[a-z])\d+$/gi, '*');
+const STATE_COLOR = { RUNNABLE: 'var(--s3)', BLOCKED: 'var(--critical)', WAITING: 'var(--axis)', TIMED_WAITING: 'var(--axis)', NEW: 'var(--muted)', TERMINATED: 'var(--muted)' };
+const stateOf = t => t.vm ? 'VM' : (t.state || '').split(' ')[0] || '?';
+const isIdle = t => !t.deadlocked && stateOf(t) !== 'BLOCKED' && !(t.cpuDelta >= 1);
+function threadsView(id, d, when) {
+  const s = jvmSnaps[id], ts = d.threads;
+  const byState = {};
+  for (const t of ts) byState[stateOf(t)] = (byState[stateOf(t)] || 0) + 1;
+  const busy = ts.reduce((a, t) => a + (t.cpuDelta || 0), 0);
+  const shown = s.showIdle ? ts : ts.filter(t => !isIdle(t));
+  const groups = {};
+  for (const t of shown) (groups[threadGroup(t.name)] ||= []).push(t);
+  const cpuOf = g => g.reduce((a, t) => a + (t.cpuDelta || 0), 0);
+  const list = Object.entries(groups).map(([k, g]) => [k, g.sort((a, b) => (b.cpuDelta || 0) - (a.cpuDelta || 0))])
+    .sort((a, b) => b[1].some(t => t.deadlocked) - a[1].some(t => t.deadlocked) || cpuOf(b[1]) - cpuOf(a[1]) || b[1].length - a[1].length);
+  if (!s.open) s.open = new Set(list.filter(([, g]) => g.some(t => t.deadlocked || stateOf(t) === 'BLOCKED') || cpuOf(g) >= 10).slice(0, 4).map(([k]) => k));
+  const head = `<div class="snaph">${ts.length} threads · ${Object.entries(byState).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="tstate"><i style="background:${STATE_COLOR[k] || 'var(--s7)'}"></i>${n} ${k === 'VM' ? 'VM-internal' : k}</span>`).join(' ')}
+    · ${cores(busy / 10)} cores busy over the sampled second ${when}
+    <label class="chk" onclick="event.stopPropagation()"><input type="checkbox" ${s.showIdle ? 'checked' : ''} onchange="jvmSnaps[${id}].showIdle=this.checked;rerenderJvms()"> idle threads (${ts.filter(isIdle).length})</label></div>`;
+  const dl = d.deadlocks.length ? `<div class="deadlock"><b>⚠ ${d.deadlocks.length === 1 ? 'Deadlock' : d.deadlocks.length + ' deadlocks'}</b><pre>${esc(d.deadlocks.join('\n\n'))}</pre></div>` : '';
+  const body = list.map(([k, g]) => {
+    const top = g[0], cpu = cpuOf(g), frame = top.frames[0]?.text || top.status || '';
+    return `<details class="tg" ${s.open.has(k) ? 'open' : ''} ontoggle="event.stopPropagation();const o=jvmSnaps[${id}].open;this.open?o.add(${esc(JSON.stringify(k))}):o.delete(${esc(JSON.stringify(k))})" onclick="event.stopPropagation()">
+      <summary><span class="tgn">${esc(k)}</span>${g.length > 1 ? ` <span class="sub">×${g.length}</span>` : ''} ${g.map(t => `<i class="dot" style="background:${STATE_COLOR[stateOf(t)] || 'var(--s7)'}" title="${esc(t.name)}: ${esc(t.state || t.status)}"></i>`).join('')}
+        ${g.some(t => t.deadlocked) ? '<span class="jflag">⚠ deadlocked</span>' : ''}<span class="tcpu">${cpu >= 1 ? Math.round(cpu) + ' ms CPU' : ''}</span><span class="tframe">${esc(shortFrame(frame))}</span></summary>
+      ${g.map(t => threadView(t)).join('')}</details>`;
+  }).join('') || '<div class="empty">no busy or blocked threads in this dump; tick “idle threads” to see the rest</div>';
+  return head + dl + body;
+}
+const shortFrame = f => f.replace(/\((?:[\w.]+@[\w.+-]+\/)?([^)]*)\)$/, '($1)');
+function threadView(t) {
+  const frames = t.frames.map(f => `<div class="fr">${esc(shortFrame(f.text))}</div>${f.locks.map(l => `<div class="lk ${/^waiting to lock|^blocked/.test(l) ? 'bad' : ''}">- ${esc(l)}</div>`).join('')}`);
+  const st = stateOf(t);
+  return `<div class="th"><div class="thh"><b>${esc(t.name)}</b> <span class="tstate"><i style="background:${STATE_COLOR[st] || 'var(--s7)'}"></i>${esc(t.state || t.status || st)}</span>
+    ${t.deadlocked ? '<span class="jflag">⚠ deadlocked</span>' : ''}<span class="sub">${t.cpuDelta != null ? `${t.cpuDelta} ms in the last second · ` : ''}${t.cpuMs != null ? `${(t.cpuMs / 1000).toFixed(1)} s CPU total` : ''}${t.daemon ? ' · daemon' : ''}</span></div>
+    ${frames.length ? `<div class="stack">${frames.slice(0, 10).join('')}${frames.length > 10 ? `<details onclick="event.stopPropagation()"><summary class="sub">${frames.length - 10} more frames</summary>${frames.slice(10).join('')}</details>` : ''}</div>` : ''}
+    ${t.synchronizers.length ? `<div class="lk">owns: ${t.synchronizers.map(esc).join(', ')}</div>` : ''}</div>`;
 }

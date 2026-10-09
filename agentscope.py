@@ -23,7 +23,7 @@ import argparse, collections, glob, json, os, re, sqlite3, subprocess, threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
-import jvm
+import helper, jvm
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
@@ -987,7 +987,7 @@ def build_state(sampler):
     for s in sessions:
         for p in s["proposals"]:
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
-    return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+    return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), jvm_helper=_helper.unavailable(), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -1007,6 +1007,7 @@ def _memsize():
 # ---------------------------------------------------------------------------------------------
 # HTTP
 
+_helper = helper.Helper()
 STATIC = ("static/jvm.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
@@ -1076,6 +1077,25 @@ def serve(port):
                     self._send(404, "not found", "text/plain")
             except Exception:
                 self._send(500, traceback.format_exc(), "text/plain")
+
+        def do_POST(self):
+            # Anything that touches another process is a POST with a JSON body, and only from this page: a cross-site
+            # page can't send application/json without a preflight we never answer, and its Origin wouldn't match.
+            origin = self.headers.get("Origin")
+            if origin and origin not in (f"http://localhost:{port}", f"http://127.0.0.1:{port}"):
+                return self._send(403, "cross-origin request refused", "text/plain")
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                return self._send(415, "expected application/json", "text/plain")
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                if self.path == "/api/jvm/snapshot":
+                    self._send(200, json.dumps(jvm.snapshot(sampler.jvms, _helper, int(body.get("id", 0)), str(body.get("kind")))), "application/json")
+                else:
+                    self._send(404, "not found", "text/plain")
+            except (ValueError, RuntimeError) as e:
+                self._send(400, json.dumps(dict(error=str(e))), "application/json")
+            except Exception:
+                self._send(500, json.dumps(dict(error=traceback.format_exc())), "application/json")
 
     print(f"agentscope on http://localhost:{port}  (reading {', '.join(CLAUDE_DIRS) or 'no Claude config dirs found'})")
     print(f"JVMs from {', '.join(sampler.jvms.dirs) or 'nowhere: no hsperfdata directory found'}")

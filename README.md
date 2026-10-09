@@ -35,7 +35,12 @@ Most of the heavy lifting on a card is usually a JVM: an sbt server, Bloop, a Gr
 
 Session cards get a line for their JVMs, and **JVMs in trouble** in Loose ends lists any that are spending a fifth of their time in GC, stay near their max heap even after collections, or ran a full GC in the last five minutes.
 
-Profiling (opt-in JFR recording, flame graphs, thread timelines) is designed in [docs/jvm-profiler.md](docs/jvm-profiler.md) and not built yet.
+When you want more than counters, an expanded row can take a snapshot, which does attach (via a small Java helper, built once with `mise run build-profiler`):
+
+- **Threads:** two thread dumps a second apart, so every thread comes with what it's doing and how much CPU it used in that second. Threads are grouped by name (`pool-*-thread-*`), busiest first, with deadlocks called out and idle threads hidden until you ask.
+- **Heap**, **Class histogram** (asks first: it pauses the JVM to walk the heap) and **Native memory** (when the JVM runs with `-XX:NativeMemoryTracking`).
+
+Continuous profiling (opt-in JFR recording, flame graphs, thread timelines) is designed in [docs/jvm-profiler.md](docs/jvm-profiler.md) and not built yet.
 
 ### Timeline
 
@@ -112,7 +117,7 @@ sqlite3 ~/.cache/agentscope/agentscope.db "select sid, round(sum(cpu)*0.6/3600,2
 
 ## Getting started
 
-Requirements: macOS, Python 3.10+ (standard library only) and an authenticated [`gh`](https://cli.github.com/).
+Requirements: macOS, Python 3.10+ (standard library only) and an authenticated [`gh`](https://cli.github.com/). JVM snapshots also need JDK 21+ to build and run the helper: `mise run build-profiler`.
 
 ```
 git clone https://github.com/retronym/agentscope && cd agentscope

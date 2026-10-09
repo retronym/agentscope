@@ -78,6 +78,7 @@ def read_perfdata(path):
 # What a JVM is
 
 KNOWN = [  # (pattern on the main class / jar, label), first match wins
+    (r"agentscope-profiler\.jar|agentscope\.profiler\.Main", "agentscope helper"),
     (r"sbt\.ForkMain", "sbt forked test JVM"),
     (r"sbt-launch|xsbt\.boot\.Boot|sbt\.internal\.client", "sbt server"),
     (r"bloop\.BloopServer|bloop\.Server", "Bloop"),
@@ -329,3 +330,36 @@ def history(db, jvm_id, since):
         return [list(r) for r in c.execute(
             """SELECT t, cpu, rss, heap_used, heap_committed, heap_max, gc_pct, sp_pct, alloc, threads, classes, young_gcs, full_gcs
                FROM jvm_minute WHERE jvm_id = ? AND t >= ? ORDER BY t""", (jvm_id, since))]
+
+
+# ---------------------------------------------------------------------------------------------
+# Snapshots: on demand, through the Java helper (tier 1 of docs/jvm-profiler.md's snapshots)
+
+SNAPSHOTS = {  # kind -> (helper op, args)
+    "threads": ("threads", dict(interval_ms=1000)),  # two dumps a second apart: per-thread CPU over that second
+    "heap": ("jcmd", dict(cmd="GC.heap_info")),
+    "histogram": ("jcmd", dict(cmd="GC.class_histogram -all")),  # -all: no full GC first, but still a heap walk at a safepoint
+    "native": ("jcmd", dict(cmd="VM.native_memory summary")),
+}
+HISTO_ROW = re.compile(r"^\s*(\d+):\s+(\d+)\s+(\d+)\s+(.+?)\s*$")
+
+
+def snapshot(tracker, helper, jvm_id, kind):
+    """Take a snapshot of a JVM that the tracker currently sees (never an arbitrary pid)."""
+    if kind not in SNAPSHOTS:
+        raise ValueError(f"unknown snapshot {kind!r}")
+    with tracker.lock:
+        j = next((j for j in tracker.jvms.values() if j["id"] == jvm_id), None)
+    if not j:
+        raise ValueError("no such JVM running")
+    op, args = SNAPSHOTS[kind]
+    t = time.time()
+    r = helper.call(op, timeout=60, pid=j["pid"], **args)
+    out = dict(kind=kind, id=jvm_id, pid=j["pid"], t=t, took=round(time.time() - t, 2))
+    if op == "threads":
+        out["dump"] = r["dump"]
+    else:
+        out["text"] = r["out"]
+        if kind == "histogram":
+            out["rows"] = [[int(m[2]), int(m[3]), m[4]] for m in map(HISTO_ROW.match, r["out"].splitlines()) if m][:60]
+    return out

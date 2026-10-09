@@ -33,3 +33,7 @@ echo "pushed gh-pages"
 [tasks.screenshots]
 description = "Regenerate docs/screenshots from dist/index.html with headless Chromium. Run `mise run demo` first."
 run = "python3 demo/screenshots.py"
+
+[tasks.build-profiler]
+description = "Build the JVM helper (profiler/target/agentscope-profiler.jar) that takes thread dumps and other snapshots"
+run = "cd profiler && ./mvnw -q -B package"

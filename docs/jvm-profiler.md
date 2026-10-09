@@ -1,6 +1,6 @@
 # Design: a built-in JVM profiler
 
-Status: phase 1 (JVM top) is done; the rest is a proposal.
+Status: phases 1 (JVM top) and 2 (helper and snapshots) are done; the rest is a proposal.
 
 ## Problem
 
@@ -139,7 +139,10 @@ Each phase is usable on its own.
   - Counter sets differ: JDK 25+ JBR lacks `sun.os.hrt.ticks`; ZGC has no eden; G1 and ZGC report the whole heap as each generation's max, so max heap is `-Xmx`, else one generation's max, else the sum.
   - Allocation is estimated from eden turnover, assuming eden is full at each GC; it's suppressed while GC takes over half the time, where that assumption breaks (a Serial-GC thrash test read 2.8 GB/s).
   - A deliberately thrashing test JVM (`-Xmx32m`, 25 MB live) tripped all three flags within a minute and was attributed to its session via the scratchpad.
-- **TODO 2. Helper and snapshots.** The `profiler/` Maven project, the JSON-lines protocol, attach via the Attach API; thread dump (rendered and grouped, deadlocks highlighted), heap info. On demand only.
+- **DONE 2. Helper and snapshots.** `profiler/` (Maven wrapper, Java 21, shaded jar, `mise run build-profiler`): `Main` speaks JSON lines, `Jcmd` attaches via the Attach API, `ThreadDump` parses `Thread.print -l` into threads, frames, locks and deadlocks. `helper.py` starts the jar on first use and stops it after 5 idle minutes. The expanded JVM row gets **Threads**, **Heap**, **Class histogram** (asks first: it walks the heap at a safepoint) and **Native memory** buttons, behind `POST /api/jvm/snapshot`, which only accepts a JVM the tracker currently sees, only `application/json`, and refuses foreign `Origin`s. Threads are two dumps a second apart, so each thread carries its CPU over that second; the view groups threads by name with their numbering wildcarded, puts deadlocks and the busiest groups first, and hides idle threads unless asked. Tests: the parser against a captured JDK 21 dump, and the attach path against a child JVM with a deadlock, a spinning thread and an idle pool. Learned along the way:
+  - `InputStream.readAllBytes()` on the attach socket stream returns only the first 8 KiB (JDK 21.0.12, macOS); reading into the start of a buffer in a loop, as `jcmd` does, gets everything. It silently truncated thread dumps past the first dozen threads.
+  - jackson-jr leaves out null fields, so the page treats every optional thread field as possibly absent.
+  - The helper is a JVM too, and shows up in the list as *agentscope helper*.
 - **TODO 3. Continuous JFR (tier 1).** `agentscope.jfc` and its measured overhead; the **Record** button and per-JVM toggle; the Java helper tailing repositories; thread lanes and per-thread CPU; flame graph and heatmap for a range in the JVM panel.
 - **TODO 4. Across JVMs.** Aggregates into SQLite; session-rooted machine-wide flame graph; activity classifier and the card summary.
 - **TODO 5. Captures (tier 2).** async-profiler start/stop with `--jfrsync`; capture list; open in asprof's HTML; diff.
@@ -158,7 +161,7 @@ Before phase 3: a spike that a JDK 21 consumer can tail repositories written by 
 
 Small files, one concern each:
 
-- `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, helper process management, `/api/jvm*` endpoints. Imported by `agentscope.py`.
+- `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, snapshots. `helper.py`: the helper process. Both imported by `agentscope.py`.
 - `static/jvm.js`: JVMs tab, JVM panel, Record button, flame graph, heatmap, thread lanes (split further if it grows).
 - `profiler/`: the Maven project (`pom.xml`, `mvnw`, `src/main/java/...`, `src/main/resources/agentscope.jfc`), building `profiler/target/agentscope-profiler.jar`.
 
