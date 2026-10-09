@@ -62,7 +62,7 @@ main { padding: 14px 20px 60px; display: flex; flex-direction: column; gap: 22px
 section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
 section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
 .card { padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; position: relative; }
 .card:hover { border-color: var(--axis); }
 .card .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -114,8 +114,8 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 #drawer td { padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border); }
 #drawer .close { position: absolute; top: 16px; right: 20px; border: 0; background: transparent; font-size: 16px; color: var(--muted); }
 .thread { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
-.msg-user { align-self: flex-end; max-width: 86%; background: var(--surface-2); border-radius: 14px; padding: 9px 14px; font: 14px/1.55 var(--font-ui); }
-.msg-asst { font: 15.5px/1.65 var(--font-prose); color: var(--ink); }
+.msg-user { align-self: flex-end; max-width: 86%; min-width: 0; overflow-wrap: anywhere; background: var(--surface-2); border-radius: 14px; padding: 9px 14px; font: 14px/1.55 var(--font-ui); }
+.msg-asst { font: 15.5px/1.65 var(--font-prose); color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .msg-meta { font: 11px var(--font-ui); color: var(--muted); margin-bottom: 3px; }
 .msg-user .msg-meta { text-align: right; }
 .msg-tools { font: 12px/1.5 var(--font-ui); color: var(--muted); border-left: 2px solid var(--border); padding: 2px 0 2px 10px; }
