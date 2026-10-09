@@ -20,7 +20,7 @@ It has to stay a well-behaved guest. These JVMs are running the agents' builds, 
 | Tier | Mechanism | Cost to the target | Scope |
 |---|---|---|---|
 | 0. **Observe** | Read `hsperfdata` (the mmap'd file `jps`/`jstat` use) | none: no attach, no safepoint | every JVM, always |
-| 1. **Record** | Continuous JFR via `jcmd JFR.start` with our own `.jfc`, ring-buffered to disk | ~1% | JVMs chosen by policy (below) |
+| 1. **Record** | Continuous JFR via `JFR.start` with our own low-overhead `.jfc`, ring-buffered to disk | ≲1% | only while **Record** is on (below) |
 | 2. **Capture** | async-profiler for a bounded window (wall, alloc, lock, native, `--all`) | higher; loads a native agent that can't be unloaded | one JVM, on explicit click |
 
 Plus on-demand **snapshots** (`Thread.print`, `GC.heap_info`, `VM.native_memory`), each one click, each labelled with what it costs (`GC.class_histogram` forces a full GC, so it says so).
@@ -33,29 +33,58 @@ Why JFR for the continuous tier rather than async-profiler: on JDK 21+, dynamica
 
 From deltas between samples: GC % of wall, allocation rate (eden turnover), safepoint %, class-loading and JIT activity, heap headroom against max. Counter names drift between JDKs (e.g. `sun.os.hrt.ticks` is absent on 25+); the reader treats every counter as optional. JVMs run with `-XX:-UsePerfData` don't appear in the directory; they're still visible in `ps`, and are marked "no perf data".
 
-### 3. A small Java helper owns JFR; Python owns storage and UI
+### 3. A Java helper owns attach and JFR; Python owns storage and UI
 
-Parsing JFR in Python would mean reimplementing a self-describing binary format that changes across JDKs. Instead, a single-file Java program (`jvm/JfrTail.java`, run with `java JfrTail.java` from JDK 21, no build step) uses the supported `jdk.jfr.consumer` API:
+Parsing JFR in Python would mean reimplementing a self-describing binary format that changes across JDKs. Instead, a Java helper in `profiler/` (a Maven project with the Maven wrapper, Java 21, shaded into one jar, built by `mise run build-profiler`) does everything that touches a target JVM:
 
-- **Live tailing**: `EventStream.openRepository(path)` follows a running recording's on-disk repository from another process, the same mechanism JMC uses. Repository path comes from `jcmd <pid> JFR.configure`.
+- **Attach**: `JFR.start`/`stop`/`configure`, `Thread.print` and friends go through the Attach API (`VirtualMachine.attach(pid)`, `--add-exports jdk.attach/sun.tools.attach` for `executeJCmd`), so a command costs a socket round trip, not a `jcmd` JVM startup.
+- **Live tailing**: `EventStream.openRepository(path)` (`jdk.jfr.consumer`) follows a running recording's on-disk repository from another process, the same mechanism JMC uses. The repository path comes from `JFR.configure`.
 - **Aggregation**: interns frames and stacks, and emits JSON lines to the Python server once a second per JVM: per-thread CPU (`jdk.ThreadCPULoad`), per-thread state and top stack from `jdk.ExecutionSample`/`NativeMethodSample`, sample counts per sub-second slot (for the heatmap), GC pauses, allocation and contention samples.
 - **Range queries**: "collapsed stacks for pid P, t0..t1, these threads, this event" re-reads the repository directly, so selections within the retention window (default 30 min) are exact, not minute-snapped.
 
-The helper is started lazily when the first recording starts and exits when there is nothing to tail. It's a JVM itself, so it's attributed to an *agentscope* bucket and its own overhead is on the page.
+- **Deep-dive rendering**: chunks covering the selected range are concatenated into a `.jfr` file (chunks are self-contained, so that's a valid recording) and rendered in-process.
 
-Using a Java helper is a departure from "plain script, stdlib only". It's justified because it is only needed when there are JVMs to profile, so a JDK is guaranteed to be present.
+The protocol with Python is JSON lines over stdin/stdout. The helper is started when recording starts or a snapshot is requested, and exits when idle. It's a JVM itself, so it's attributed to an *agentscope* bucket and its own overhead is on the page. If the jar hasn't been built, tier 0 still works and **Record** says how to build it.
+
+Libraries, each because it pulls its weight:
+
+- **`tools.profiler:jfr-converter`** (async-profiler's converter, on Maven Central): its HTML flame graph, heatmap and diff outputs for deep dives, without async-profiler having to be installed.
+- **`jackson-jr-objects`** (~100 KB): JSON both ways on the pipe, rather than hand-rolled escaping.
+
+Tier 2 still needs async-profiler installed (`asprof` and its native library); without it the capture buttons are hidden.
 
 ### 4. Attribution comes for free
 
 Each JVM is a process the existing `Sampler` already attributes to a session (ancestry, cwd, sticky, mentioned). The JVM view inherits that, so every flame graph can be rooted at session → JVM → thread group → frames. That gives the all-JVM view its shape: a machine-wide flame graph where the first two levels answer "which session, which build".
 
-### 5. Recording policy: auto for agent build daemons, opt-in for the rest
+### 5. Recording is opt-in: a **Record** button in the header
 
-Proposed default: start tier-1 recording automatically for JVMs that are (a) attributed to a session, (b) a recognised long-lived build tool (sbt server, Gradle daemon, Bloop, Metals, Maven daemon), and (c) up for more than 30 s. Everything else (IntelliJ, your own apps, forked test JVMs that live for seconds) is tier 0 only, with a "record" button. A global switch turns auto-recording off. Recordings are named `agentscope` so they're recognisable in `jcmd JFR.check` and never collide with the user's own, and are stopped when agentscope exits.
+Nothing is attached until you press **Record** in the page header. While recording, the button pulses (a slow red pulse, like a camera's tally light) and shows elapsed time; pressing it again stops. Its dropdown chooses the scope:
 
-Short-lived forked test JVMs are the awkward case: they are often where the time goes, but they're gone before an attach is worth it. Future work: offer a `JAVA_TOOL_OPTIONS`/`-XX:StartFlightRecording` snippet for a session to put on its forked JVMs, writing into a directory the helper watches.
+- **Agent JVMs** (default): JVMs attributed to a session.
+- **All JVMs**: also IntelliJ, your own apps, anything else of yours with perf data.
 
-### 6. Turning stacks into "what is it doing": an activity classifier
+While on, JVMs that start in scope are picked up once they've been up 5 s, so a long build is covered without re-pressing. A JVM panel also has its own record toggle for when you want exactly one JVM. Recordings are named `agentscope`, so they're recognisable in `JFR.check` and never touch the user's own; they're stopped on **Stop**, and when agentscope exits. Data recorded stays browsable after stopping (raw for as long as the JFR repository lives, aggregates per the retention below).
+
+Short-lived forked test JVMs are the awkward case: they're often where the time goes, but they can finish before an attach is worthwhile. Future work: a `-XX:StartFlightRecording` snippet for a session to add to its forked JVMs, writing into a directory the helper watches.
+
+### 6. A low-overhead recording configuration
+
+Our `agentscope.jfc` starts from the JDK's `default.jfc` (designed for continuous production use, <1%) and trims further. Enabled:
+
+| Event | Setting | Why |
+|---|---|---|
+| `jdk.ExecutionSample` | every 20 ms | CPU flame graphs, heatmap, thread lanes |
+| `jdk.NativeMethodSample` | every 100 ms | threads in native code (I/O, zip) |
+| `jdk.ThreadCPULoad` | every 1 s | per-thread CPU for the lanes and `top` |
+| `jdk.GarbageCollection`, `jdk.GCPhasePause`, `jdk.GCHeapSummary` | on | GC pauses and heap over time |
+| `jdk.ObjectAllocationSample` | throttled to 50/s | allocation flame graph, near-free |
+| `jdk.JavaMonitorEnter`, `jdk.ThreadPark` | ≥ 20 ms | contention |
+| `jdk.SafepointBegin` | ≥ 10 ms | long safepoints only |
+
+Everything else is off, notably `jdk.OldObjectSample`, TLAB allocation events, class loading, and socket/file I/O events. Recording options: `disk=true maxage=30m maxsize=250m`. The overhead claim gets measured, not assumed: phase 3 includes running a Scala compile benchmark with and without the recording.
+
+### 7. Turning stacks into "what is it doing": an activity classifier
 
 Gradle's console is useful because it says `> :core:compileScala` per worker rather than showing frames. We get most of the way there for any JVM with an ordered list of frame rules applied to each sample's stack, first match wins:
 
@@ -72,7 +101,7 @@ Gradle's console is useful because it says `> :core:compileScala` per worker rat
 
 Rules are data (a table in the code to begin with), and unmatched stacks fall back to the top non-JDK frame. Each thread's activity over time drives the thread lanes; the dominant activities per JVM become a one-line summary on the session card ("scalac typer ×3, test ×1"), which is the Gradle-style live view.
 
-### 7. Storage: raw in JFR, aggregates in SQLite
+### 8. Storage: raw in JFR, aggregates in SQLite
 
 The JFR repository *is* the raw store for the recent window; we don't copy samples. SQLite gets what's needed beyond it, pruned like the existing tables:
 
@@ -84,12 +113,13 @@ The JFR repository *is* the raw store for the recent window; we don't copy sampl
 
 Thread groups are thread names with numeric suffixes stripped (`scala-execution-context-global-17` → `scala-execution-context-global-*`), which keeps cardinality sane.
 
-### 8. Rendering: our own canvas views, asprof's HTML for deep dives
+### 9. Rendering: our own canvas views, asprof's HTML for deep dives
 
-Flame graph and heatmap are hand-written canvas components in `index.html`, because they need to be linked: brushing the heatmap or thread lanes re-queries the flame graph, the flame graph is rooted at sessions, and they share the page's theme. For a deep dive, an "Open in async-profiler" button runs `jfrconv --html` (or `--diff` between two captures) on the selected range when async-profiler is installed, reusing its search, reverse and diff views rather than rebuilding them.
+Flame graph and heatmap are hand-written canvas components (in `static/jvm.js`, not `index.html`), because they need to be linked: brushing the heatmap or thread lanes re-queries the flame graph, the flame graph is rooted at sessions, and they share the page's theme. For a deep dive, an "Open in async-profiler" button renders the selected range with the helper's `jfr-converter` (or a diff between two ranges or captures), reusing its search, reverse and diff views rather than rebuilding them.
 
 ## What the user sees
 
+- **Record button** in the header, beside the status chips: idle, or pulsing red with elapsed time and the number of JVMs being recorded. Dropdown for scope (agent JVMs / all JVMs).
 - **Session cards** get a JVM line: label, heap bar against max, GC %, and the activity summary. Red when GC % or heap headroom says it's in trouble.
 - **JVMs tab (all JVMs).** A `top`-style table: pid, label, session, uptime, CPU, heap used / max, GC %, alloc rate, safepoint %, threads, recording state, with sparklines. Below it, the machine-wide flame graph rooted at sessions, for the selected time range.
 - **JVM panel (one JVM).**
@@ -105,9 +135,9 @@ Flame graph and heatmap are hand-written canvas components in `index.html`, beca
 Each phase is usable on its own.
 
 - **TODO 1. JVM top (tier 0).** hsperfdata reader in the sampler; `jvm`, `jvm_minute`; JVMs tab table; JVM line on session cards; health flags. No attach.
-- **TODO 2. Snapshots.** `jcmd` thread dump (rendered and grouped, deadlocks highlighted), heap info. On demand only.
-- **TODO 3. Continuous JFR (tier 1).** Our `.jfc`; recording policy and controls; the Java helper tailing repositories; thread lanes and per-thread CPU; flame graph and heatmap for a range in the JVM panel.
-- **TODO 4. All JVMs.** Aggregates into SQLite; session-rooted machine-wide flame graph; activity classifier and the card summary.
+- **TODO 2. Helper and snapshots.** The `profiler/` Maven project, the JSON-lines protocol, attach via the Attach API; thread dump (rendered and grouped, deadlocks highlighted), heap info. On demand only.
+- **TODO 3. Continuous JFR (tier 1).** `agentscope.jfc` and its measured overhead; the **Record** button and per-JVM toggle; the Java helper tailing repositories; thread lanes and per-thread CPU; flame graph and heatmap for a range in the JVM panel.
+- **TODO 4. Across JVMs.** Aggregates into SQLite; session-rooted machine-wide flame graph; activity classifier and the card summary.
 - **TODO 5. Captures (tier 2).** async-profiler start/stop with `--jfrsync`; capture list; open in asprof's HTML; diff.
 
 Before phase 3: a spike that a JDK 21 consumer can tail repositories written by the oldest JVMs we expect (JDK 8u, 11, 17), and that `EventStream.openRepository` copes with chunk rotation and the target exiting mid-stream.
@@ -120,9 +150,17 @@ Before phase 3: a spike that a JDK 21 consumer can tail repositories written by 
 - **Linux**: `perf_events` and kernel stacks through async-profiler, and JFR's `jdk.CPUTimeSample` (JDK 25, Linux only).
 - **Export** collapsed stacks or OTLP profiles (async-profiler 4 speaks OTLP) to Pyroscope or similar.
 
-## Open questions
+## Code layout
 
-1. Is auto-recording build daemons (decision 5) the right default, or should every attach be opt-in?
-2. Is a Java helper acceptable (decision 3), and is `java JfrTail.java` from source good enough, or should it be a prebuilt jar cached in `~/.cache/agentscope`?
-3. Should JVMs not owned by any session (IntelliJ, your own apps) get tier 1 at all, or stay observe-only?
-4. `agentscope.py` is a single 1,000-line file. The JVM work roughly doubles it; I'd put it in `jvm.py` alongside, imported by the server. OK?
+Small files, one concern each:
+
+- `jvm.py`: hsperfdata reader, JVM discovery and tier-0 sampling, `jvm*` tables, helper process management, `/api/jvm*` endpoints. Imported by `agentscope.py`.
+- `static/jvm.js`: JVMs tab, JVM panel, Record button, flame graph, heatmap, thread lanes (split further if it grows).
+- `profiler/`: the Maven project (`pom.xml`, `mvnw`, `src/main/java/...`, `src/main/resources/agentscope.jfc`), building `profiler/target/agentscope-profiler.jar`.
+
+## Resolved questions
+
+1. **Recording policy**: opt-in only, via the header **Record** button (decision 5).
+2. **Java helper**: yes, as a Maven project; libraries are fine when they pull their weight (decision 3).
+3. **JVMs not owned by a session**: the user's choice, via the Record scope (decision 5).
+4. **File layout**: `jvm.py` and friends, preferring smaller files (Code layout).
