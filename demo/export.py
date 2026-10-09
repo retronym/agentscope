@@ -351,7 +351,7 @@ def anonymize(state, load, threads, procs):
                    for p in state["proposals"]],
         orphans=[dict(o, label=map_proc_label(o["label"]), args=map_proc_label(o["label"]), cwd=None) for o in state["orphans"]],
         jvms=[dict(j, sid=sid(j["sid"]) if j.get("sid") else None, label=map_jvm_label(j["label"]), main=map_jvm_label(j["label"]), args="", vendor="")
-              for j in state["jvms"]],
+              for j in state["jvms"] if j["label"] != "agentscope helper"],  # our own helper: its name is a real repo
         jvm_hist=None,
         machine_hist=[[t, b, [[sid(x), c] for x, c in top]] for t, b, top in state["machine_hist"]],
     )
