@@ -4,8 +4,11 @@
 Sources (all local except GitHub):
   - ~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json  desktop session metadata
       (title, branch, archived, prs, postTurnSummary, spawnedFrom)
-  - ~/.claude/sessions/<pid>.json   live CLI processes: pid -> sessionId, status (busy/idle/waiting)
-  - ~/.claude/projects/**/*.jsonl   transcripts: activity timeline, prompts, proposals, tokens
+  - <config dir>/sessions/<pid>.json   live CLI processes: pid -> sessionId, status (busy/idle/waiting)
+  - <config dir>/projects/**/*.jsonl   transcripts: activity timeline, prompts, proposals, tokens
+    Config dirs: --claude-dir (repeatable) or AGENTSCOPE_CLAUDE_DIRS (colon-separated); by default ~/.claude,
+    $CLAUDE_CONFIG_DIR if set, and any ~/.claude-* sibling holding sessions (multi-account setups that alias
+    `claude` with a different CLAUDE_CONFIG_DIR).
   - ps / lsof                       process tree; CPU/RSS attributed to sessions by ancestry, else by cwd
   - gh api graphql                  your PRs (open + recently closed), CI and review state
 
@@ -21,8 +24,40 @@ from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
-LIVE_DIR = os.path.join(HOME, ".claude/sessions")
-PROJECTS = os.path.join(HOME, ".claude/projects")
+CLAUDE_DIRS = []  # set by configure_claude_dirs(); every Claude Code config dir to read sessions and transcripts from
+
+
+def discover_claude_dirs():
+    """~/.claude, $CLAUDE_CONFIG_DIR if set, and ~/.claude-* siblings that look like config dirs."""
+    dirs = [os.path.join(HOME, ".claude")] + ([os.environ["CLAUDE_CONFIG_DIR"]] if os.environ.get("CLAUDE_CONFIG_DIR") else [])
+    for d in sorted(glob.glob(os.path.join(HOME, ".claude-*"))):
+        if os.path.isdir(os.path.join(d, "projects")) or os.path.isdir(os.path.join(d, "sessions")):
+            dirs.append(d)
+    return dirs
+
+
+def configure_claude_dirs(explicit=None):
+    """Explicit dirs (--claude-dir / AGENTSCOPE_CLAUDE_DIRS) replace discovery; duplicates and missing dirs are dropped."""
+    env = [d for d in os.environ.get("AGENTSCOPE_CLAUDE_DIRS", "").split(":") if d]
+    chosen = explicit or env or discover_claude_dirs()
+    out = []
+    for d in chosen:
+        d = os.path.realpath(os.path.expanduser(d))
+        if os.path.isdir(d) and d not in out:
+            out.append(d)
+    CLAUDE_DIRS[:] = out
+    return out
+
+
+def config_label(path):
+    """Short name of the config dir a path lives under: '.claude-vl' -> 'claude-vl'."""
+    for d in CLAUDE_DIRS:
+        if path and (path == d or path.startswith(d + os.sep)):
+            return os.path.basename(d).lstrip(".")
+    return None
+
+
+configure_claude_dirs()
 CACHE = os.path.join(HOME, ".cache/agentscope")
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUCKET = 300  # seconds per activity bucket
@@ -325,7 +360,7 @@ def refresh_index():
         except Exception:
             pass
     seen, changed = set(), 0
-    for path in glob.glob(os.path.join(PROJECTS, "*", "*.jsonl")):
+    for path in (p for d in CLAUDE_DIRS for p in glob.glob(os.path.join(d, "projects", "*", "*.jsonl"))):
         seen.add(path)
         try:
             st = os.stat(path)
@@ -366,12 +401,13 @@ def refresh_index():
 
 def read_live():
     live = {}
-    for f in glob.glob(os.path.join(LIVE_DIR, "*.json")):
+    for f in (f for d in CLAUDE_DIRS for f in glob.glob(os.path.join(d, "sessions", "*.json"))):
         try:
             j = json.load(open(f))
             os.kill(j["pid"], 0)
         except Exception:
             continue
+        j["_cfg"] = config_label(f)
         live[j["pid"]] = j
     return live
 
@@ -876,7 +912,7 @@ def meta_cached():
 def build_state(sampler):
     meta = meta_cached()
     with _index_lock:
-        idx = {e["d"]["sid"]: e["d"] for e in _index.values()}
+        idx = {e["d"]["sid"]: dict(e["d"], _cfg=config_label(p)) for p, e in _index.items()}
     with sampler.lock:
         cur = dict(sampler.current)
         hist = list(sampler.hist)
@@ -895,7 +931,7 @@ def build_state(sampler):
         spark = [[round(h[0]), h[1].get(sid, [0, 0])[0]] for h in hist[-240:]] if load else []
         last = max(filter(None, [t.get("last"), (m.get("lastActivityAt") or 0) / 1000 or None, ((l or {}).get("updatedAt") or 0) / 1000 or None]), default=None)
         sessions.append(dict(
-            sid=sid, local=m.get("sessionId"), title=m.get("title") or (l or {}).get("name") or t.get("title") or (t.get("first_prompt") or "")[:80] or sid[:8],
+            sid=sid, local=m.get("sessionId"), account=t.get("_cfg") or (l or {}).get("_cfg"), title=m.get("title") or (l or {}).get("name") or t.get("title") or (t.get("first_prompt") or "")[:80] or sid[:8],
             cwd=cwd, lane=lane_of(cwd, m.get("originCwd")), repo=repo_of(m.get("originCwd")) or repo_of(cwd), branch=m.get("branch") or (t.get("branches") or [None])[0],
             branches=list(dict.fromkeys([b for b in [m.get("branch")] + (m.get("writtenBranches") or []) + (t.get("branches") or []) if b])),
             first=t.get("first") or (m.get("createdAt") or 0) / 1000 or None, last=last,
@@ -939,7 +975,7 @@ def build_state(sampler):
     for s in sessions:
         for p in s["proposals"]:
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
-    return dict(now=time.time(), ncpu=NCPU, ui=os.path.getmtime(os.path.join(HERE, "index.html")), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+    return dict(now=time.time(), ncpu=NCPU, claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=os.path.getmtime(os.path.join(HERE, "index.html")), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -1023,11 +1059,15 @@ def serve(port):
             except Exception:
                 self._send(500, traceback.format_exc(), "text/plain")
 
-    print(f"agentscope on http://localhost:{port}")
+    print(f"agentscope on http://localhost:{port}  (reading {', '.join(CLAUDE_DIRS) or 'no Claude config dirs found'})")
     ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8377)
-    serve(ap.parse_args().port)
+    ap.add_argument("--claude-dir", action="append", metavar="DIR",
+                    help="a Claude Code config dir to read (repeatable); default: ~/.claude, $CLAUDE_CONFIG_DIR, and ~/.claude-* siblings")
+    a = ap.parse_args()
+    configure_claude_dirs(a.claude_dir)
+    serve(a.port)

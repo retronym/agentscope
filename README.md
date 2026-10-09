@@ -77,8 +77,8 @@ Everything is local and read-only except the GitHub query:
 | Source | What it provides |
 |---|---|
 | Desktop app session metadata (`~/Library/Application Support/Claude/claude-code-sessions`) | titles, branches, archived flag, bound PRs, post-turn status summaries, spawn links, proposal outcomes |
-| `~/.claude/sessions/*.json` | live PID → session, busy / idle / waiting |
-| `~/.claude/projects/**/*.jsonl` | transcripts: activity, prompts, messages, proposals, token counts |
+| `~/.claude/sessions/*.json` (and every other config dir) | live PID → session, busy / idle / waiting |
+| `~/.claude/projects/**/*.jsonl` (likewise) | transcripts: activity, prompts, messages, proposals, token counts |
 | `ps`, `lsof` | the process tree, cputime, memory, working directories |
 | `gh api graphql` | your open PRs and those closed in the last 45 days: CI, reviews, mergeability |
 
@@ -108,6 +108,8 @@ python3 agentscope.py        # or: mise run serve
 ```
 
 Then open http://localhost:8377. Load history accumulates while the server runs, so leave it running.
+
+**Several Claude accounts?** If you run `claude` with different `CLAUDE_CONFIG_DIR`s (e.g. `alias claude-work='env CLAUDE_CONFIG_DIR=$HOME/.claude-work claude'`), agentscope reads `~/.claude`, `$CLAUDE_CONFIG_DIR` and every `~/.claude-*` directory that holds sessions, and tags each session with the one it came from. To choose explicitly, pass `--claude-dir` once per directory, or set `AGENTSCOPE_CLAUDE_DIRS` (colon-separated). The startup line lists the directories in use.
 
 Endpoint-security and MDM agents can be grouped under *system / security* with `AGENTSCOPE_SYSTEM_HINTS="SomeAV:mdm-agent"` (colon-separated command-line substrings).
 

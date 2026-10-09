@@ -370,7 +370,7 @@ function matches(s) {
   if (!showArchived && s.archived && !s.live) return false;
   if (!chipOK(s)) return false;
   if (!query) return true;
-  const hay = [s.title, s.lane, s.branch, s.cwd, ...(s.prs || []), s.summary?.status_detail].join(' ').toLowerCase();
+  const hay = [s.title, s.lane, s.branch, s.cwd, s.account, ...(s.prs || []), s.summary?.status_detail].join(' ').toLowerCase();
   return query.split(/\s+/).every(w => hay.includes(w));
 }
 
@@ -491,7 +491,7 @@ function renderCards() {
     const st = sessionState(s);
     if (st.k !== 'busy' && st.k !== 'waiting' && !s.summary?.needs_action && (s.load?.cpu || 0) < 50)
       return `<div class="panel card ${st.k}" data-sid="${s.sid}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
-        <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
+        <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${accountChip(s)}<span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
         <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
         ${s.summary?.status_detail ? `<div class="meta">${lk(s.summary.status_detail, s)}</div>` : ''}
         ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}</div>`;
@@ -500,7 +500,7 @@ function renderCards() {
     const procs = (s.load?.procs || []).filter(p => !p.self && (p.cpu > 1 || p.rss > 200e6)).slice(0, 3)
       .map(p => `${esc(p.label)}${p.how !== 'tree' ? ' <span title="attributed by ' + p.how + '">⌁</span>' : ''} ${p.cpu.toFixed(0)}%`).join(' · ');
     return `<div class="panel card ${st.k}" data-sid="${s.sid}" onclick="openDrawer('${s.sid}')">
-      <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span><span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
+      <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${accountChip(s)}<span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
       <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
       ${s.branch ? `<div class="meta">${esc(s.branch)}</div>` : ''}
       ${sum ? `<div class="sum">${lk(sum, s)}</div>` : ''}
@@ -712,6 +712,7 @@ function bareRef(n, s) {
 }
 const lk = (t, s) => linkify(esc(t), s);
 // Deep link into the desktop app; it resolves local_* ids among unarchived sessions.
+const accountChip = s => (S.claude_dirs?.length > 1 && s.account) ? `<span class="lane-chip" title="Claude config dir: ~/.${esc(s.account)}">${esc(s.account)}</span>` : '';
 const claudeLink = s => !DEMO && s.local && !s.archived ? `<a class="pr" href="claude://code/continue?session=${encodeURIComponent(s.local)}" title="Open this session in the Claude app" onclick="event.stopPropagation()">↗ Claude</a>` : '';
 const issueChips = s => Object.keys(s.issues || {}).slice(0, 6).map(k => `<a class="pr" href="${esc(ghUrl(k, 'issues'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="issue mentioned in the session"><i style="background:var(--s3);border-radius:50%"></i>${esc(k)}</a>`).join('');
 
@@ -767,7 +768,7 @@ function drawerMeta(s) {
   const kids = S.sessions.filter(x => x.spawned_from === s.sid);
   const parent = s.spawned_from && S.sMap[s.spawned_from];
   return `<h2>${esc(s.title)}</h2>
-    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}</div>
+    <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${s.branch ? `<span class="lane-chip">${esc(s.branch)}</span>` : ''}${s.model ? `<span class="lane-chip">${esc(s.model)}</span>` : ''}${accountChip(s)}</div>
     <div class="when" style="margin-top:6px">${fmtTime(s.first)} → ${s.live ? 'now' : fmtTime(s.last)} · ${s.prompts} prompts · ${(s.out_tokens / 1000).toFixed(0)}k output tokens${s.subagents ? ' · ' + s.subagents + ' subagents' : ''}</div>
     ${s.summary ? `<div class="k">Status</div><div>${esc(s.summary.status_category || '')}: ${lk(s.summary.status_detail || '', s)}${s.summary.needs_action ? `<br><b>⚑ ${lk(s.summary.needs_action, s)}</b>` : ''}</div>` : ''}
     ${s.prs.length ? `<div class="k">Pull requests</div><div style="display:flex;gap:6px;flex-wrap:wrap">${s.prs.map(prChip).join('')}</div>` : ''}

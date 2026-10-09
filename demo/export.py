@@ -299,13 +299,14 @@ def anonymize(state, load, threads, procs):
         q["args"] = q["label"]
         return q
 
+    acct = {a: f"claude-{['personal', 'work', 'oss', 'client'][i % 4]}" if i else "claude" for i, a in enumerate(state.get("claude_dirs") or [])}
     out_sessions = []
     for s in state["sessions"]:
         lane = s["lane"]
         t = dict(s)
         t.update(
             sid=sid(s["sid"]), local="local_" + new_id("local" + s["sid"]) if s.get("local") else None,
-            title=synth_title(s["title"]), lane=N.map_lane(lane), repo=N.map_repo(s.get("repo")),
+            title=synth_title(s["title"]), lane=N.map_lane(lane), account=acct.get(s.get("account")), repo=N.map_repo(s.get("repo")),
             cwd=N.map_path(s.get("cwd"), lane), branch=N.map_branch(s.get("branch")), branches=[N.map_branch(b) for b in s.get("branches") or []],
             first_prompt=tmap(s.get("first_prompt"), "user"), last_prompt=tmap(s.get("last_prompt"), "user"),
             last_text=tmap(s.get("last_text")), report=synth_line(s.get("report"), STATUS, "report"),
@@ -335,7 +336,7 @@ def anonymize(state, load, threads, procs):
 
     st = dict(state)
     st.update(
-        sessions=out_sessions, prs=out_prs, gh_login=LOGIN, gh_err=None, ui=0,
+        sessions=out_sessions, prs=out_prs, gh_login=LOGIN, gh_err=None, ui=0, claude_dirs=list(acct.values()),
         proposals=[dict(p, sid=sid(p["sid"]), lane=N.map_lane(p["lane"]), title=synth_title(p.get("title") or ""),
                         prompt=tmap(p.get("prompt"), "user"), task_id="task_" + new_id(p.get("task_id"))[:8] if p.get("task_id") else None)
                    for p in state["proposals"]],
