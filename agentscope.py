@@ -83,13 +83,14 @@ def lane_of(cwd, origin=None):
 # Transcript index (incremental, cached by mtime/size)
 
 INDEX_FILE = os.path.join(CACHE, "transcripts.json")
-INDEX_VERSION = 5
+INDEX_VERSION = 6
 _index = {}
 _index_lock = threading.Lock()
 _index_ready = threading.Event()
 
 WORKTREE_PATH = re.compile(r"(/[\w./-]*?/\.worktrees/[\w.-]+/[\w.-]+)")
 PR_URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+ISSUE_URL = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)")
 NOISE_PREFIX = ("<command-", "<local-command", "<system-reminder", "Caveat:", "[Request interrupted", "<task-notification", "<side-sessions-event", "<ci-monitor-event")
 
 
@@ -116,7 +117,7 @@ def _is_human_prompt(rec):
 def parse_transcript(path):
     sid = os.path.splitext(os.path.basename(path))[0]
     d = dict(sid=sid, cwd=None, branches=[], first=None, last=None, act={}, prompts=0, first_prompt=None,
-             last_prompt=None, last_prompt_t=None, last_text=None, out_tokens=0, title=None, pr_mentions={},
+             last_prompt=None, last_prompt_t=None, last_text=None, out_tokens=0, title=None, pr_mentions={}, issues={},
              proposals=[], subagents=0, paths={})
     pending_props = {}
     branches = collections.Counter()
@@ -159,6 +160,8 @@ def parse_transcript(path):
                     d["last_text"] = blk["text"].strip()[-1500:]
                     for repo, n in PR_URL.findall(blk["text"]):
                         d["pr_mentions"][f"{repo}#{n}"] = d["pr_mentions"].get(f"{repo}#{n}", 0) + 1
+                    for repo, n in ISSUE_URL.findall(blk["text"]):
+                        d["issues"][f"{repo}#{n}"] = d["issues"].get(f"{repo}#{n}", 0) + 1
                 if blk.get("type") == "tool_use" and "start_session" in blk.get("name", ""):
                     inp = blk.get("input") or {}
                     if inp.get("initiation") in ("own_initiative", "offer"):
@@ -175,6 +178,8 @@ def parse_transcript(path):
                         d["proposals"].append(p)
             hp = _is_human_prompt(r)
             if hp:
+                for repo, n in ISSUE_URL.findall(hp):
+                    d["issues"][f"{repo}#{n}"] = d["issues"].get(f"{repo}#{n}", 0) + 1
                 slot[0] += 1
                 d["prompts"] += 1
                 if d["first_prompt"] is None:
@@ -650,7 +655,7 @@ def build_state(sampler):
             summary=m.get("postTurnSummary"), report=m.get("lastTurnReport"), spawned_from=(m.get("spawnedFrom") or {}).get("sessionId"),
             meta_prs=m.get("prs") or [], artifacts=[dict(url=a.get("url"), title=a.get("title")) for a in (m.get("publishedArtifacts") or [])],
             resolved=m.get("resolvedBackgroundTaskSuggestions") or {}, model=m.get("model"), scheduled=bool(m.get("scheduledTaskId")),
-            pr_mentions=t.get("pr_mentions", {}),
+            pr_mentions=t.get("pr_mentions", {}), issues=t.get("issues", {}),
             live=dict(pid=l["pid"], status=l.get("status"), waiting=l.get("waitingFor"), name=l.get("name")) if l else None,
             load=load,
             spark=spark,
