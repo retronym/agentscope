@@ -12,7 +12,7 @@ survives into the output.
 
 Usage: python3 demo/export.py [--out dist/index.html] [--days 7] [--items 100]
 """
-import argparse, hashlib, json, os, random, re, secrets, sys, time, uuid
+import argparse, gzip, hashlib, json, os, random, re, secrets, sys, time, uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -373,6 +373,66 @@ def anonymize(state, load, threads, procs):
 
 
 # ---------------------------------------------------------------------------------------------
+# Profiles: recordings of public workloads (demo/record_fixture.py), replayed by the page (static/demo.js)
+
+FIXTURE = os.path.join(ROOT, "demo", "fixture", "profiles.json.gz")
+WORKLOAD_LABELS = dict(sbt="sbt server", javac="CompileWorkload", service="InventoryService.java")  # what really ran
+
+
+def workload_for(label, key, names):
+    if "sbt" in label and "sbt" in names:
+        return names.index("sbt")
+    r = rng_for("workload", key)
+    if "javac" in names and r.random() < 0.75:  # most JVMs agents start are builds; a few are services
+        return names.index("javac")
+    others = [i for i, n in enumerate(names) if n != "sbt"] or list(range(len(names)))
+    return others[r.randrange(len(others))]
+
+
+def profiles(st, procs):
+    """The recording state and the data static/demo.js needs, for an anonymized, time-shifted snapshot.
+    A few live agent JVMs, each from a different session, replay a workload each; every JVM-like process in the
+    history replays the minutes of a workload like its own in Across JVMs."""
+    if not os.path.exists(FIXTURE):
+        print(f"no {os.path.relpath(FIXTURE, ROOT)}: the demo's profiler sections stay empty (mise run demo-fixture)", file=sys.stderr)
+        return None
+    fx = json.load(gzip.open(FIXTURE))
+    names = [j["name"] for j in fx["jvms"]]
+    now, sess = st["now"], {s["sid"]: s for s in st["sessions"]}
+    busy = lambda j: (bool(sess.get(j["sid"], {}).get("live")), j["cpu"])  # noqa: E731
+    cands = sorted((j for j in st["jvms"] if j.get("sid") in sess), key=busy, reverse=True)
+    chosen, used = {}, set()
+    for want in names:  # the sbt workload on an sbt server if there is one; the rest on whatever is busiest
+        pick = next((j for j in cands if j["id"] not in chosen and j["sid"] not in used and (want != "sbt" or "sbt" in j["label"])), None) \
+            or next((j for j in cands if j["id"] not in chosen and j["sid"] not in used), None)
+        if pick:
+            chosen[pick["id"]] = names.index(want)
+            used.add(pick["sid"])
+    rec_jvms = {}
+    for k, (jid, fi) in enumerate(chosen.items()):
+        j = next(x for x in st["jvms"] if x["id"] == jid)
+        cores = [0.0] * max(1, fx["span"] // 1000)
+        for t, load in zip(fx["jvms"][fi]["cpu"]["t"], fx["jvms"][fi]["cpu"]["load"]):
+            cores[min(len(cores) - 1, t // 1000)] += load / 10000
+        j.update(label=WORKLOAD_LABELS.get(names[fi], names[fi]), main=WORKLOAD_LABELS.get(names[fi], names[fi]), cpu=round(sum(cores) / len(cores) * 100, 1))
+        rec_jvms[str(jid)] = dict(fx=fi, phase=round(fx["span"] * k / max(1, len(chosen))))
+    since = now - 3 * 3600
+    st["record"] = dict(on=True, scope="agents", since=since, manual={}, stored_since=now - 7 * 86400, settings=dict(record_depth=512, capture_depth=4096),
+                        jvms={jid: dict(since=since, live=True, error=None, activities=None, stack_depth=512) for jid in rec_jvms})
+    st["jvm_helper"] = None
+    across = []
+    for sid, ps in procs.items():
+        for p in ps:
+            label = p["label"]
+            if not (label.startswith("java") or label.startswith("sbt server") or label.startswith("sbt forked")):
+                continue
+            series = [[t, round(cpu)] for t, cpu, _ in p["series"] if cpu >= 5]
+            if series:
+                across.append(dict(id=p["id"], sid=sid, label=label.replace(" (java)", ""), fx=workload_for(label, p["id"], names), series=series))
+    return dict(fixture=fx, jvms=rec_jvms, across=across)
+
+
+# ---------------------------------------------------------------------------------------------
 # Time shift: hide when the work happened, keep durations, gaps and ordering
 
 TIME_KEYS = {"now", "gh_t", "start", "first", "last", "last_prompt_t", "t", "t1", "created", "updated", "merged", "closed", "last_commit"}
@@ -479,13 +539,21 @@ def main():
     st, ld, th, pr, N = anonymize(state, load, threads, procs)
     jh = {str(k): {"series": v} for k, v in state["jvm_hist"].items()}
     obj = shift_times(dict(state=st, load=ld, threads=th, procs=pr, jvm_hist=jh), random_shift())
+    obj["profiles"] = profiles(obj["state"], obj["procs"])  # after the shift: the fixture's times are offsets, not epochs
     unshifted = check_shifted(obj, state["now"])
     if unshifted:
         sys.exit(f"refusing to write: {len(unshifted)} timestamps were not shifted, e.g. {sorted(set(unshifted))[:8]}")
-    data = json.dumps(obj, separators=(",", ":"))
+    # The fixture is a recording of public code, made apart from the snapshot: its frames name public projects (scala,
+    # zinc, coursier) that may well be among the denylist's repo names. Check it only for who made it.
+    fixture = (obj.get("profiles") or {}).pop("fixture", None)
     leaks = check(obj, denylist(state, threads, N))
+    if fixture:
+        home = os.path.expanduser("~")
+        leaks += check(fixture, {d for d in (home, os.path.basename(home), N.login) if d})
+        obj["profiles"]["fixture"] = fixture
     if leaks:
         sys.exit(f"refusing to write: {len(leaks)} real strings survived anonymization, e.g. {leaks[:8]}")
+    data = json.dumps(obj, separators=(",", ":"))
     page = open(os.path.join(ROOT, "index.html")).read()
     for f in A.STATIC:  # one self-contained file: inline the page's own scripts and styles
         src = open(os.path.join(ROOT, f)).read()

@@ -38,7 +38,7 @@ function activityGroups() {
 function renderActivity() {
   const el = $('#jvmactivity'); if (!el) return;
   const live = Object.values(recState().jvms || {}).some(r => r.live);
-  if (DEMO || !live) { el.hidden = true; return; }
+  if (!live) { el.hidden = true; return; }
   el.hidden = false;
   if (!el.dataset.built) {  // the lanes canvas lives outside what gets patched, so it survives refreshes
     el.innerHTML = `<div class="profh"><b>Activity</b><span class="sub">what every recorded JVM's threads are doing</span><span id="actwin"></span><span class="sub" id="actstat"></span></div>
@@ -56,13 +56,19 @@ function renderActivity() {
       lastSession = sk;
     }
     const busy = r.threads.filter(t => t.now_samples > 0).sort((a, b) => b.now_samples - a.now_samples);
-    const shown = busy.slice(0, 6);
+    // threads of one group doing the same thing share a line: "worker-* ×6 · InventoryService"
+    const lines = [];
+    for (const t of busy) {
+      const group = threadGroup(t.name), l = lines.find(x => x.group === group && x.t.now === t.now);
+      l ? l.n++ : lines.push({ group, t, n: 1 });
+    }
+    const shown = lines.slice(0, 6), more = lines.slice(6).reduce((a, l) => a + l.n, 0);
     html += `<div class="actjvm"><a href="#" onclick="openJvmBox(${j.id});return false">☕ ${esc(j.label)} <span class="sub">${j.pid}</span></a>
         <span class="sub">${busy.length ? `${busy.length} busy thread${busy.length > 1 ? 's' : ''}` : 'idle'}${activityLine(j) ? ' · ' : ''}</span>${activityLine(j)}</div>` +
-      shown.map(t => `<div class="actline" onclick="openThread(${j.id}, ${t.tid}, ${esc(JSON.stringify(t.name))})" title="${esc(t.frame || '')}">
-        <i style="background:${actColor(t.now)}"></i><span class="actname">${esc(t.now || '?')}</span><span class="actthread">${esc(t.name)}</span>
+      shown.map(({ group, t, n }) => `<div class="actline" onclick='openThread(${j.id}, ${esc(JSON.stringify(n > 1 ? { group, name: group } : { tid: t.tid, name: t.name }))})' title="${esc(t.frame || '')}">
+        <i style="background:${actColor(t.now)}"></i><span class="actname">${esc(t.now || '?')}</span><span class="actthread">${esc(n > 1 ? `${group} ×${n}` : t.name)}</span>
         <span class="actframe">${esc(t.frame ? shortName(t.frame) : '')}${t.native ? ' <span class="sub">(native)</span>' : ''}</span></div>`).join('') +
-      (busy.length > shown.length ? `<div class="actline sub" style="cursor:default">+${busy.length - shown.length} more busy</div>` : '');
+      (more ? `<div class="actline sub" style="cursor:default">+${more} more busy</div>` : '');
   }
   patch($('#actlines'), html || '<div class="empty">no samples yet</div>');
   const stat = $('#actstat');
@@ -70,15 +76,35 @@ function renderActivity() {
   drawActivityLanes(groups);
 }
 
-function openThread(jvmId, tid, name) {
-  prof[jvmId] = Object.assign(prof[jvmId] || { kind: 'cpu', window: 300, zoom: [] }, { thread: { tid, name }, zoom: [] });
+// thread: {tid, name}, or {group, name} for every thread of a group
+function openThread(jvmId, thread) {
+  prof[jvmId] = Object.assign(prof[jvmId] || { kind: 'cpu', window: 300, zoom: [] }, { thread, zoom: [] });
   openJvmBox(jvmId);
+}
+
+// As the full view's lanes (mergeLanes): a group's threads share a lane; per bin, the activity with the most samples
+function mergeActLanes(threads) {
+  const by = new Map();
+  for (const t of threads) {
+    const g = threadGroup(t.name);
+    (by.get(g) || by.set(g, []).get(g)).push(t);
+  }
+  return [...by].map(([group, ts]) => {
+    if (ts.length === 1) return ts[0];
+    const cells = {};  // bin -> {activity: samples}
+    for (const t of ts) for (const [b, [ai, n]] of Object.entries(t.bins)) (cells[b] ||= {})[ai] = (cells[b][ai] || 0) + n;
+    const bins = Object.fromEntries(Object.entries(cells).map(([b, c]) => {
+      const [ai] = Object.entries(c).sort((x, y) => y[1] - x[1])[0];
+      return [b, [+ai, Object.values(c).reduce((a, n) => a + n, 0)]];
+    }));
+    return { group, name: `${group} ×${ts.length}`, samples: ts.reduce((a, t) => a + t.samples, 0), bins };
+  }).sort((a, b) => b.samples - a.samples);
 }
 
 function drawActivityLanes(groups) {
   const d = act.data; if (!d) return;
-  const rows = [];  // [group, thread] for threads with samples in the window, a few per JVM
-  for (const g of groups) for (const t of g.r.threads.filter(t => t.samples > 0).slice(0, 8)) rows.push([g, t]);
+  const rows = [];  // [group, lane] for threads (or groups of them) with samples in the window, a few per JVM
+  for (const g of groups) for (const t of mergeActLanes(g.r.threads.filter(t => t.samples > 0)).slice(0, 8)) rows.push([g, t]);
   const r = canvasFor('act', 'lanes', Math.max(1, rows.length) * ACT_ROW + 18);
   if (!r) return;
   const [c, g, w] = r, x0 = ACT_LABEL, win = d.window * 1000, since = d.since * 1000, xOf = t => x0 + (t - since) / win * (w - x0);
@@ -118,7 +144,7 @@ function drawActivityLanes(groups) {
   c.onmouseleave = hideTip;
   c.onmousedown = e => {
     const [xa, i] = at(e);
-    if (xa < x0) { const row = rows[i]; if (row) openThread(row[0].j.id, row[1].tid, row[1].name); return; }
+    if (xa < x0) { const row = rows[i]; if (row) openThread(row[0].j.id, laneFilter(row[1])); return; }
     let xb = xa;
     const move = ev => { xb = ev.clientX - c.getBoundingClientRect().left; act.sel = [tOf(Math.min(xa, xb)), tOf(Math.max(xa, xb))]; drawActivityLanes(groups); };
     const up = () => {

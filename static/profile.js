@@ -9,15 +9,16 @@ const clock = sec => { sec = Math.max(0, Math.floor(sec)); const h = Math.floor(
 
 function renderRecord() {
   const el = $('#rec'); if (!el) return;
-  if (DEMO || !S.record) { el.hidden = true; return; }
+  if (!S.record) { el.hidden = true; return; }
   const r = recState(), why = S.jvm_helper;
-  patch(el, `<button class="recbtn ${r.on ? 'on' : ''}" ${why ? 'disabled' : ''} onclick="toggleRecord()" title="${esc(why || (r.on ? 'Stop recording' :
-      'Record every JVM in scope with a low-overhead JFR recording (≲1%): thread lanes, heatmap and flame graphs in each JVM\'s full view'))}">
+  const title = DEMO ? 'In the demo, recording is always on: its JVMs replay recordings of public builds (sbt, javac and a small service)'
+    : why || (r.on ? 'Stop recording' : 'Record every JVM in scope with a low-overhead JFR recording (≲1%): thread lanes, heatmap and flame graphs in each JVM\'s full view');
+  patch(el, `<button class="recbtn ${r.on ? 'on' : ''}" ${why ? 'disabled' : ''} ${DEMO ? '' : 'onclick="toggleRecord()"'} title="${esc(title)}">
       <i></i><span id="rec-label">${r.on ? recLabel() : 'Record'}</span></button>
-    <select class="recscope" title="which JVMs to record" onchange="setRecord(${r.on}, this.value)">
+    <select class="recscope" title="which JVMs to record" onchange="setRecord(${r.on}, this.value)" ${DEMO ? 'disabled' : ''}>
       <option value="agents" ${r.scope === 'agents' ? 'selected' : ''}>agent JVMs</option><option value="all" ${r.scope === 'all' ? 'selected' : ''}>all JVMs</option></select>`);
 }
-function recLabel() { const r = recState(); return `Recording ${clock(Date.now() / 1000 - (r.since || Date.now() / 1000))} · ${recLive()} JVM${recLive() === 1 ? '' : 's'}`; }
+function recLabel() { const r = recState(); return `Recording ${clock(nowSec() - (r.since || nowSec()))} · ${recLive()} JVM${recLive() === 1 ? '' : 's'}`; }
 setInterval(() => { const l = document.getElementById('rec-label'); if (l && recState().on) l.textContent = recLabel(); }, 1000);
 async function post(url, body) {
   const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -77,10 +78,10 @@ async function loadProfile(id, force) {
   if (!force && p.fetched && Date.now() - p.fetched < 4000) { drawProfile(id); return; }
   p.busy = true;
   try {
-    const since = Date.now() / 1000 - p.window;
+    const since = nowSec() - p.window;
     p.summary = await api(`/api/jvm/summary?id=${id}&since=${since}&bins=${Math.min(300, p.window)}`);
-    const [t0, t1] = p.sel || [since, Date.now() / 1000 + 5];
-    p.flame = await api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread ? p.thread.tid : ''}&reverse=${p.reverse ? 1 : 0}${zq(p)}`);
+    const [t0, t1] = p.sel || [since, nowSec() + 5];
+    p.flame = await api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}${zq(p)}`);
     p.error = null;
   } catch (e) { p.error = String(e.message || e); }
   p.busy = false; p.fetched = Date.now();
@@ -132,16 +133,16 @@ function drawProfile(id) {
     selRect(g, w, HEAT_H + 14);
     brush(c, id, w, s);
   }
-  // thread lanes: one row per thread, busiest first
-  const threads = s.threads.slice(0, 40);
+  // thread lanes: one row per thread, or per group of threads (see mergeLanes), busiest first
+  const threads = mergeLanes(s.threads).slice(0, 40);
   r = canvasFor(id, 'lanes', Math.max(1, threads.length) * ROW_H + 4);
   if (r) {
     const [c, g, w] = r, cw = (w - x0) / nb;
     const cpuC = css('--s3'), natC = css('--s1'), parkC = css('--axis'), lockC = css('--critical');
     threads.forEach((t, i) => {
       const y = 2 + i * ROW_H;
-      if (p.thread?.tid === t.tid) { g.fillStyle = accent + '33'; g.fillRect(0, y, w, ROW_H); }
-      g.fillStyle = p.thread && p.thread.tid !== t.tid ? muted : ink;
+      if (p.thread && laneKey(p.thread) === t.key) { g.fillStyle = accent + '33'; g.fillRect(0, y, w, ROW_H); }
+      g.fillStyle = p.thread && laneKey(p.thread) !== t.key ? muted : ink;
       g.fillText(fit(g, t.name, x0 - 8), 4, y + ROW_H / 2);
       for (const [b, v] of Object.entries(t.bins)) {
         const [cpu, ns, nat, park, lock] = v, x = x0 + b * cw, binS = s.bin / 1000;
@@ -159,6 +160,23 @@ function drawProfile(id) {
   }
   drawFlame(id);
 }
+// Threads of a group (pool-*-thread-*, worker-*) share a lane. Build tools run their tasks on short-lived pool
+// threads (sbt: hundreds in a few minutes), which would otherwise get a lane each with one blip in it.
+function mergeLanes(threads) {
+  const by = new Map();
+  for (const t of threads) {
+    const g = threadGroup(t.name);
+    let l = by.get(g);
+    if (!l) by.set(g, l = { group: g, threads: [], busy: 0, bins: {} });
+    l.threads.push(t); l.busy += t.busy;
+    for (const [b, v] of Object.entries(t.bins)) { const c = l.bins[b] ||= [0, 0, 0, 0, 0]; v.forEach((x, i) => c[i] += x); }
+  }
+  return [...by.values()].map(l => l.threads.length === 1 ? { ...l.threads[0], key: 't' + l.threads[0].tid }
+    : { name: `${l.group} ×${l.threads.length}`, group: l.group, n: l.threads.length, busy: l.busy, bins: l.bins, key: 'g' + l.group }).sort((a, b) => b.busy - a.busy);
+}
+// what the flame graph shows: one thread ({tid, name}) or a group of them ({group, name})
+const laneKey = t => t.group ? 'g' + t.group : 't' + t.tid;
+const laneFilter = t => t.group ? { group: t.group, name: t.group } : { tid: t.tid, name: t.name };
 const heatColor = f => `hsl(${Math.round(48 - 40 * f)}, 90%, ${Math.round(72 - 30 * f)}%)`;
 function fit(g, text, w) { if (g.measureText(text).width <= w) return text; while (text.length > 3 && g.measureText(text + '…').width > w) text = text.slice(0, -1); return text + '…'; }
 
@@ -168,7 +186,7 @@ function brush(c, id, w, s, laneAt) {
   c.onmousedown = e => {
     const r0 = c.getBoundingClientRect(), xa = e.clientX - r0.left;
     if (xa < LABEL_W) {
-      if (laneAt) { const t = laneAt(Math.floor((e.clientY - r0.top - 2) / ROW_H)); if (t) setProf(id, { thread: p.thread?.tid === t.tid ? null : { tid: t.tid, name: t.name }, zoom: [] }); }
+      if (laneAt) { const t = laneAt(Math.floor((e.clientY - r0.top - 2) / ROW_H)); if (t) setProf(id, { thread: p.thread && laneKey(p.thread) === t.key ? null : laneFilter(t), zoom: [] }); }
       return;
     }
     let xb = xa;
@@ -182,7 +200,7 @@ function brush(c, id, w, s, laneAt) {
   };
   c.onmousemove = e => {
     const r0 = c.getBoundingClientRect(), x = e.clientX - r0.left;
-    if (x < LABEL_W) { const t = laneAt?.(Math.floor((e.clientY - r0.top - 2) / ROW_H)); t ? tip(e, `<div class="tt">${esc(t.name)}</div><div class="tm">click to show only this thread in the flame graph</div>`) : hideTip(); return; }
+    if (x < LABEL_W) { const t = laneAt?.(Math.floor((e.clientY - r0.top - 2) / ROW_H)); t ? tip(e, `<div class="tt">${esc(t.name)}</div><div class="tm">click to show only ${t.group ? 'these threads' : 'this thread'} in the flame graph</div>`) : hideTip(); return; }
     const t = tOf(x);
     tip(e, `<div class="tm">${new Date(t * 1000).toLocaleTimeString()}</div>`);
   };
@@ -203,7 +221,7 @@ function drawFlame(id) {
   const what = String(id).startsWith('cap') ? (f.diff ? 'difference against the chosen capture: red grew, blue shrank' : 'capture')
     : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM'
     : p.sel ? 'selected range' : 'whole window';
-  const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · thread ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>`;
+  const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · ${p.thread.group ? 'threads' : 'thread'} ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>`;
   Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),
     onZoom: path => { p.zpath = path; p.load ? p.load() : id === 'all' ? loadAllFlame(true) : loadProfile(id, true); } });
 }
@@ -223,7 +241,7 @@ prof.all = { kind: 'cpu', range: 3600, zoom: [] };
 function renderAllFlame() {
   const el = $('#jvmflame'); if (!el) return;
   const stored = S.record?.stored_since;
-  if (DEMO || !stored) { patch(el, DEMO ? '' : '<div class="sub" style="padding:8px 2px">Press <b>Record</b> to see, minute by minute, where all your JVMs spend their time.</div>'); return; }
+  if (!stored) { patch(el, '<div class="sub" style="padding:8px 2px">Press <b>Record</b> to see, minute by minute, where all your JVMs spend their time.</div>'); return; }
   const p = prof.all;
   patch(el, `<div class="profh"><b>Across JVMs</b><span class="sub">session → JVM → activity → frames</span>
       <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf('all', {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
@@ -237,7 +255,7 @@ async function loadAllFlame(force) {
   if (p.busy || (!force && p.fetched && Date.now() - p.fetched < 30000)) { drawFlame('all'); return; }
   p.busy = true;
   // a range brushed on the Activity lanes, or the last N; stored per minute, so widen to whole minutes
-  const [t0, t1] = p.abs ? [Math.floor(p.abs[0] / 60) * 60, Math.ceil(p.abs[1] / 60) * 60] : [Date.now() / 1000 - p.range, Date.now() / 1000 + 60];
+  const [t0, t1] = p.abs ? [Math.floor(p.abs[0] / 60) * 60, Math.ceil(p.abs[1] / 60) * 60] : [nowSec() - p.range, nowSec() + 60];
   try { p.flame = await api(`/api/jvms/flame?t0=${t0}&t1=${t1}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${zq(p)}`); p.error = null; }
   catch (e) { p.error = String(e.message || e); }
   p.busy = false; p.fetched = Date.now();

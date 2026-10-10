@@ -286,6 +286,14 @@ public final class Profile {
     return out;
   }
 
+  /** Java ids of the threads in a group ({@link Activities#threadGroup}); never empty, so it always filters. */
+  public synchronized List<Long> threadsInGroup(String group) {
+    List<Long> out = new ArrayList<>();
+    for (int i = 0; i < threadNames.size(); i++) if (group.equals(Activities.threadGroup(threadNames.get(i)))) out.add(threadJavaIds.get(i));
+    if (out.isEmpty()) out.add(Long.MIN_VALUE);
+    return out;
+  }
+
   private Activities.Activity explain(int stack) {
     while (stackActivity.size() <= stack) stackActivity.add(null);
     Activities.Activity a = stackActivity.get(stack);
@@ -360,6 +368,42 @@ public final class Profile {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("frames", names);
     out.put("stacks", defs);  // [stack id, [frame indexes, root first], activity]
+    return out;
+  }
+
+  /**
+   * Everything recorded since {@code since}, raw: for building the static demo's fixture (demo/record_fixture.py).
+   * Stacks are renumbered to the ones used, each with its frames (root first), activity and "doing what" frame.
+   */
+  public synchronized Map<String, Object> dump(long since) {
+    Map<Integer, Integer> used = new LinkedHashMap<>();
+    List<long[]> rows = new ArrayList<>();  // t, thread, stack, kind, weight
+    for (int i = samples.lo; i < samples.n; i++) {
+      if (samples.t[i] < since) continue;
+      int s = samples.b[i] < 0 ? -1 : used.computeIfAbsent(samples.b[i], x -> used.size());
+      rows.add(new long[]{samples.t[i], samples.a[i], s, samples.c[i], samples.w[i]});
+    }
+    List<Object> stackOut = new ArrayList<>();
+    for (int s : used.keySet()) {
+      List<Integer> fs = new ArrayList<>();
+      for (int f : stacks.get(s)) fs.add(f);
+      Activities.Activity a = explain(s);
+      stackOut.add(List.of(fs, a.label(), a.frame()));
+    }
+    List<long[]> loads = new ArrayList<>();
+    for (int i = cpu.lo; i < cpu.n; i++) if (cpu.t[i] >= since) loads.add(new long[]{cpu.t[i], cpu.a[i], cpu.w[i]});
+    List<Object> gc = new ArrayList<>();
+    for (int i = gcs.lo; i < gcs.n; i++) if (gcs.t[i] >= since) gc.add(List.of(gcs.t[i], gcs.w[i], gcNames.get(i - gcs.lo)));
+    List<Object> threads = new ArrayList<>();
+    for (int i = 0; i < threadNames.size(); i++) threads.add(java.util.Arrays.asList(threadJavaIds.get(i), threadNames.get(i)));
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("kinds", KINDS);
+    out.put("frames", frames);
+    out.put("stacks", stackOut);  // [[frame ids, root first], activity, index of the "doing what" frame]
+    out.put("threads", threads);  // [java thread id, name]
+    out.put("samples", rows);  // [t ms, thread, stack (-1: none), kind, weight]
+    out.put("cpu", loads);  // [t ms, thread, load in 1/10000 of a core]
+    out.put("gc", gc);  // [t ms, pause µs, collector]
     return out;
   }
 

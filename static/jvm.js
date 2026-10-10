@@ -135,7 +135,10 @@ function renderJvms() {
 let boxId = null;
 function openJvmBox(id) { boxId = id; setHash({ jvm: id }); renderJvmBox(); loadJvmHist(id); }
 function closeJvmBox() { boxId = null; setHash({ jvm: null, cap: null }); renderJvmBox(); }
-function applyJvmHash(h) { const id = h.jvm ? +h.jvm : null; if (id !== boxId) id ? openJvmBox(id) : closeJvmBox(); }
+function applyJvmHash(h) {
+  const id = h.jvm ? +h.jvm : null; if (id !== boxId) id ? openJvmBox(id) : closeJvmBox();
+  if (h.across && ALL_RANGES.some(r => r[0] === +h.across) && prof.all.range !== +h.across) setProf('all', { range: +h.across, abs: null, zoom: [] });  // #across=86400: Across JVMs' range
+}
 function renderJvmBox() {
   let box = document.getElementById('jvmbox');
   if (!box) {

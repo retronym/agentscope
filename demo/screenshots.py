@@ -44,16 +44,20 @@ def main():
     html = open(a.html).read()
     data = json.loads(html.split("window.STATIC_DATA = ", 1)[1].split(";</script>", 1)[0].replace("<\\/", "</"))
     sid = pick(data)
+    rec = (data.get("profiles") or {}).get("jvms") or {}
+    sbt = next((jid for jid, r in rec.items() if data["profiles"]["fixture"]["jvms"][r["fx"]]["name"] == "sbt"), next(iter(rec), None))
     url = "file://" + os.path.abspath(a.html)
     shots = [  # name, hash, width, height, color scheme (0 = dark, 1 = light)
         ("overview", "", 1440, 900, 0),
         ("overview-light", "", 1440, 900, 1),
-        ("jvms", "only=sec-jvms", 1440, 560, 0),
         ("timeline", "only=sec-timeline", 1440, 1000, 0),
         ("session", f"session={sid}", 1440, 900, 0),
         ("search", "q=cache", 1440, 800, 0),
         ("loose-ends", "only=sec-ends", 1440, 900, 0),
-    ]
+    ] + ([
+        ("jvm-across", "only=jvmflame&across=86400", 1440, 760, 0),
+        ("jvm-profile", f"jvm={sbt}", 1440, 1100, 0),
+    ] if sbt else [])
     os.makedirs(a.out, exist_ok=True)
     chrome, webp = browser(), shutil.which("cwebp")
     with tempfile.TemporaryDirectory() as tmp:

@@ -198,6 +198,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 .empty { color: var(--muted); padding: 6px 0; }
 .err { color: var(--critical); }
 @media (max-width: 700px) { #machine { grid-template-columns: 1fr; } .ends { grid-template-columns: 1fr; } header, main { padding-left: 16px; padding-right: 16px; } }
+section.only-part > :not(h2):not(.only-this) { display: none !important; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -207,6 +208,7 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 <script src="static/flame.js"></script>
 <script src="static/captures.js"></script>
 <script src="static/activity.js"></script>
+<script src="static/demo.js"></script>
 </head>
 <body>
 <div id="demo-banner" class="demo-banner" hidden>
@@ -276,12 +278,14 @@ function patch(el, html) {
   return true;
 }
 // ---------------------------------------------------------------- data source: live server, or embedded static demo data
-// The static export sets window.STATIC_DATA = {state, load, threads, procs}; every API call is answered from it.
+// The static export sets window.STATIC_DATA = {state, load, threads, procs, jvm_hist, profiles}; every API call is
+// answered from it (profiles by static/demo.js).
 const DEMO = !!window.STATIC_DATA;
+const nowSec = () => DEMO ? DemoProf.now() : Date.now() / 1000;
 function staticApi(url) {
   const D = window.STATIC_DATA, u = new URL(url, 'http://x'), q = Object.fromEntries(u.searchParams);
   switch (u.pathname) {
-    case '/api/state': return D.state;
+    case '/api/state': return Object.assign(D.state, { record: DemoProf.record(D.state.record) });
     case '/api/load': return D.load.filter(r => r.t >= +q.since);
     case '/api/procs': return D.procs[q.sid] || [];
     case '/api/jvm': return (D.jvm_hist?.[q.id]?.series || []).filter(r => r[0] >= +q.since);
@@ -319,7 +323,7 @@ function staticApi(url) {
       return groups.sort((a, b) => b.n - a.n).slice(0, 30);
     }
   }
-  return null;
+  return DemoProf.api(u.pathname, q);
 }
 async function api(url) {
   if (DEMO) { const r = staticApi(url); if (r === null) throw new Error('not found'); return r; }
@@ -1067,7 +1071,7 @@ if (DEMO) {
   // synthetic PRs and issues link nowhere
   document.addEventListener('click', e => { if (e.target.closest('a[href="#"]')) e.preventDefault(); }, true);  // only the synthetic '#' links; the project links work  // onclick handlers still run
 }
-// ---------------------------------------------------------------- URL hash state: #session=<sid>[&at=<idx>] · #q=<search> · #scroll=<id> · #only=<section id> · #jvm=<id>
+// ---------------------------------------------------------------- URL hash state: #session=<sid>[&at=<idx>] · #q=<search> · #scroll=<id> · #only=<section or part id> · #jvm=<id> · #across=<seconds>
 // Shareable links into a session or a search; the back button closes a panel opened from a link.
 function hashState() { return Object.fromEntries(new URLSearchParams(location.hash.slice(1))); }
 function applyHash() {
@@ -1077,7 +1081,11 @@ function applyHash() {
   if (!h.session && openSid) closeDrawer();
   if (h.scroll) document.getElementById(h.scroll)?.scrollIntoView();
   applyJvmHash(h);
-  for (const sec of document.querySelectorAll('main > section')) sec.hidden = !!h.only && sec.id !== h.only;  // #only=sec-timeline: one section
+  // #only=sec-timeline: one section; #only=jvmflame: one part of a section (with its heading)
+  const part = h.only && document.getElementById(h.only), sec_ = part?.closest('main > section');
+  for (const sec of document.querySelectorAll('main > section')) { sec.hidden = !!h.only && sec !== sec_; sec.classList.toggle('only-part', sec_ === sec && part !== sec); }
+  for (const el of document.querySelectorAll('.only-this')) el.classList.toggle('only-this', el === part && part !== sec_);
+  if (part && part !== sec_) part.classList.add('only-this');
 }
 function setHash(kv) {
   const h = hashState();

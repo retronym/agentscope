@@ -1016,7 +1016,7 @@ def zoom_path(q):
 
 
 def jvm_labels(jvm_id, _cache={}):
-    """(session title, JVM label) for the machine-wide flame graph's first two levels."""
+    """(session title, JVM label) for the machine-wide flame graph's first two levels: JVMs of one kind merge."""
     if time.time() - _cache.get(jvm_id, (0,))[0] > 60:  # sessions get attributed late; don't keep "no session" forever
         with db() as c:
             r = c.execute("SELECT sid, label, pid FROM jvm WHERE id = ?", (jvm_id,)).fetchone()
@@ -1026,7 +1026,7 @@ def jvm_labels(jvm_id, _cache={}):
             with _index_lock:
                 t = next((e["d"] for e in _index.values() if e["d"]["sid"] == sid), {})
         title = m.get("title") or t.get("title") or (t.get("first_prompt") or "")[:60] or (sid[:8] if sid else "no session")
-        _cache[jvm_id] = (time.time(), (title, f"{label} {pid}"))
+        _cache[jvm_id] = (time.time(), (title, label))  # not the pid: a session restarts its sbt server many times a week
     return _cache[jvm_id][1]
 
 
@@ -1044,7 +1044,7 @@ def _memsize():
 
 _helper = helper.Helper()
 _captures = None  # set by serve()
-STATIC = ("static/jvm.js", "static/profile.js", "static/flame.js", "static/captures.js", "static/activity.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
+STATIC = ("static/jvm.js", "static/profile.js", "static/flame.js", "static/captures.js", "static/activity.js", "static/demo.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
@@ -1121,7 +1121,7 @@ def serve(port):
                     pid = sampler.recorder.pid_of(int(q.get("id", 0)))
                     threads = [int(x) for x in q.get("threads", "").split(",") if x.lstrip("-").isdigit()]
                     r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
-                                     kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1", path=zoom_path(q))
+                                     kind=q.get("kind", "cpu"), threads=threads, group=q.get("group") or None, reverse=q.get("reverse") == "1", path=zoom_path(q))
                     self._send(200, json.dumps(r["flame"]), "application/json")
                 elif path == "/api/activity":
                     w = int(q.get("window", 300))

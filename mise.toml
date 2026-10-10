@@ -30,6 +30,10 @@ rm -rf "$tmp"
 echo "pushed gh-pages"
 """
 
+[tasks.demo-fixture]
+description = "Record the demo's JVM profiles: sbt, javac and a small service building public code, about 10 minutes. Needs sbt and `mise run build-profiler`."
+run = "python3 demo/record_fixture.py"
+
 [tasks.screenshots]
 description = "Regenerate docs/screenshots from dist/index.html with headless Chromium. Run `mise run demo` first."
 run = "python3 demo/screenshots.py"
@@ -47,6 +51,6 @@ description = "Parse every page script and compile the Python (catches a broken 
 run = """
 set -e
 for f in static/*.js; do node -e "new Function(require('fs').readFileSync('$f','utf8'))" || { echo "syntax error in $f"; exit 1; }; done
-python3 -m py_compile agentscope.py jvm.py helper.py recording.py profiles.py captures.py demo/export.py
+python3 -m py_compile agentscope.py jvm.py helper.py recording.py profiles.py captures.py demo/export.py demo/record_fixture.py demo/screenshots.py
 echo "ok"
 """
