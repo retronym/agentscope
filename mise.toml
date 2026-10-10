@@ -20,7 +20,7 @@ tmp=$(mktemp -d)
 cp dist/index.html "$tmp/"
 touch "$tmp/.nojekyll"
 # date the commit at the demo's own (shifted) snapshot time, so git doesn't record when the real export happened
-when=$(python3 -c "import json,re,sys; h=open('dist/index.html').read(); print(int(json.loads(h.split('window.STATIC_DATA = ',1)[1].split(';</script>',1)[0].replace('<\\\\/','</'))['state']['now']))")
+when=$(python3 -c "import json,re,sys; h=open('dist/index.html').read(); print(int(json.loads(h.split('window.STATIC_DATA = ',1)[1].split(';</script>',1)[0].replace(r'<\\\\/','</'))['state']['now']))")
 git -C "$tmp" init -q -b gh-pages
 git -C "$tmp" add -A
 GIT_AUTHOR_DATE="@$when +0000" GIT_COMMITTER_DATE="@$when +0000" \
