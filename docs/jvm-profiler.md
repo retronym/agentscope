@@ -166,6 +166,8 @@ Each phase is usable on its own.
 
 Before phase 3: a spike that a JDK 21 consumer can tail repositories written by the oldest JVMs we expect (JDK 8u, 11, 17), and that `EventStream.openRepository` copes with chunk rotation and the target exiting mid-stream.
 
+- **DONE: the profiler in the static demo, and polish found on the way.** The demo replays recordings of public builds (`demo/record_fixture.py`: sbt compiling and testing a generated Scala project, javac, a small service with a contended lock), answered in the page by `static/demo.js`. Driving it showed two rough edges, fixed: sbt runs tasks on hundreds of short-lived pool threads, so lanes now merge a thread group (`pool-*-thread-*`) into one, and a click filters the flame graph to the group; and Across JVMs' second level is now the kind of JVM rather than each pid, since a session restarts its sbt server many times a week.
+
 ## Future work
 
 - **Let agents ask.** A text endpoint (`/api/jvm/<pid>/summary`: activity breakdown, top frames, GC health for the last N minutes) that a session can `curl` to find out why its own build is slow, instead of guessing.
@@ -183,6 +185,7 @@ Small files, one concern each:
 - `static/captures.js`: the Captures section of a JVM's full view. `static/activity.js`: the machine-wide Activity view.
 - `recording.py`: the Record switch, scope and per-JVM recordings; activities and per-minute storage. `profiles.py`: the stored profiles (pools, blobs, the machine-wide query).
 - `static/jvm.js`: the JVMs section, full view and snapshots. `static/profile.js`: the Record button, heatmap, thread lanes and flame graph.
+- `demo/record_fixture.py`: records sbt, javac and a small service building public code, for the static demo; `static/demo.js` answers the profile queries from that recording in the page, the way the helper and `profiles.py` would.
 - `profiler/`: the Maven project (`pom.xml`, `mvnw`, `src/main/java/...`, `src/main/resources/agentscope.jfc`), building `profiler/target/agentscope-profiler.jar`.
 
 ## Resolved questions

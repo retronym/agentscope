@@ -1,20 +1,21 @@
 <h1><img src="assets/icon.svg" width="34" height="34" align="top" alt=""> agentscope</h1>
 
-**One local page for keeping track of many concurrent Claude Code agent sessions: what each one is doing right now, what it has done this week, which PRs it produced, how much of your machine it is using, and what it left waiting on you.**
+**One local page for keeping track of many concurrent Claude Code agent sessions: what each one is doing right now, what it has done this week, which PRs it produced, how much of your machine it is using (and, for the JVM builds it starts, where that CPU went), and what it left waiting on you.**
 
 <p>
   <a href="https://retronym.github.io/agentscope/"><b>▶&nbsp;Try the live demo</b></a>
-  &nbsp;·&nbsp; a real snapshot of ~140 sessions with every title, message, name, path and date replaced by synthetic ones
+  &nbsp;·&nbsp; a real snapshot of ~140 sessions with every title, message, name, path and date replaced by synthetic ones; its JVM profiles are recordings of public builds
 </p>
 
 [![agentscope: live sessions, attributed CPU and memory, PR status](docs/screenshots/overview.webp)](https://retronym.github.io/agentscope/)
 
 ## Why
 
-Running a dozen or more agent sessions across several repositories, the Claude app's session list stops being enough. Three things get lost:
+Running a dozen or more agent sessions across several repositories, the Claude app's session list stops being enough. Four things get lost:
 
 - **Right now.** Which sessions are working, which are blocked on a permission prompt or a question, and which one is quietly pinning six cores with a forked build.
 - **Over time.** What happened in each repo this week, which session produced which PR, which session spawned which.
+- **Where the CPU went.** Agents start builds: sbt servers, Gradle daemons, forked tests. When the machine is pinned or a session is slow, you want to know what those JVMs were doing, not just that they were busy.
 - **Loose ends.** Questions an agent asked that you never answered, follow-ups it proposed, PRs that went quiet when their session did. These are exactly the things that fall out of your head.
 
 agentscope reads what Claude Code already records on your machine, joins it with your PRs on GitHub and the live process table, and puts it on one page that refreshes every few seconds.
@@ -27,32 +28,25 @@ Live sessions first: waiting on you, then working, then recently active. Each ca
 
 Cards stay put: they only reorder when a session's state or CPU tier changes materially, and moves are animated. Status chips (*waiting for you*, *active*, *working*, *GitHub*) filter every view.
 
-### JVMs
-
-<img src="docs/screenshots/jvms.webp" alt="JVMs: heap, GC, allocation and threads of every JVM, attributed to sessions">
-
-Most of the heavy lifting on a card is usually a JVM: an sbt server, Bloop, a Gradle daemon, a forked test run. The JVMs section is a `top` for all of them, read from the counters HotSpot already publishes for `jstat` (`hsperfdata`), so nothing attaches to them and they pay nothing. Each row shows the owning session, uptime, CPU, heap used against committed and max, the share of wall time in GC pauses, an estimated allocation rate, threads and loaded classes. Expand a row for the heap by generation, metaspace, safepoint and JIT time, the JVM's options, and the last three hours per minute.
-
-Session cards get a line for their JVMs, and **JVMs in trouble** in Loose ends lists any that are spending a fifth of their time in GC, stay near their max heap even after collections, or ran a full GC in the last five minutes.
-
-When you want more than counters, an expanded row can take a snapshot, which does attach (via a small Java helper, built once with `mise run build-profiler`):
-
-- **Threads:** two thread dumps a second apart, so every thread comes with what it's doing and how much CPU it used in that second. Threads are grouped by name (`pool-*-thread-*`), busiest first, with deadlocks called out and idle threads hidden until you ask.
-- **Heap**, **Class histogram** (asks first: it pauses the JVM to walk the heap) and **Native memory** (when the JVM runs with `-XX:NativeMemoryTracking`).
-
-<img src="docs/screenshots/jvm-profile.webp" alt="A JVM's full view: activity, sub-second heatmap, thread lanes and a flame graph of a javac workload">
-
-**Record** in the header turns on continuous profiling: every JVM in scope (agent JVMs, or all of yours) gets a low-overhead JFR recording, picked up as it starts, and the button pulses until you stop it. A JVM's full view (⤢) then shows a sub-second CPU heatmap, one lane per thread coloured by what it's doing (on CPU, in native code, parked, blocked on a lock), and a flame graph of CPU, native, allocation, lock or park time. Drag across the heatmap or lanes to pick a range, click a thread's name to see only that thread.
-
-Every flame graph (a JVM's, Across JVMs, a capture's) has the same controls. Click a frame to zoom in, and the breadcrumb or the ancestor bars to zoom back out; Ctrl/⌘+scroll or pinch zooms at the cursor, Shift+drag zooms to a range. Search takes a regex, shows what share matched, and steps through matches with N; Enter keeps it as a coloured highlight. Filters stack and can each be removed: keep or hide the stacks through a pattern, hide one stack (Ctrl/Alt+click), merge a function away (say, lambda frames or recursion), or focus on a function (every call to it, merged). Right-click a frame for all of these, press ? for the keys. Filters and highlights survive the data refreshing underneath. You can also record a single JVM from its full view. Stacks are recorded 512 frames deep by default (JFR's own default of 64 cuts off a compiler's recursion); the depth is a setting in the full view, and takes effect in JVMs where JFR hasn't started yet. Recordings stop when you press Stop or quit agentscope. How much they cost is measured, not guessed: on a javac workload, CPU per compile was the same with and without the recording, within noise (`mise run bench-overhead`). The first recording in a JVM costs a moment of JFR start-up.
-
-While recording, each JVM's row and its session's card say what it's doing (for example *scalac: typer 62% · zinc 20%*), from rules that name compiler phases, test frameworks, dependency resolution and build tools. **Activity**, at the top of the JVMs section, shows it machine-wide and per thread, the way Gradle's console shows its workers: for every recorded JVM, grouped by session, each busy thread with what it's doing now and the frame that shows it, then one lane per thread over the last 5 or 30 minutes, coloured by activity. Click a lane to open that thread's profile; drag across the lanes to pick the range for Across JVMs.
-
-<img src="docs/screenshots/jvm-activity.webp" alt="Activity: each recorded JVM's busy threads, what they're doing now, and lanes coloured by activity"> Every minute of every recording is also kept for a week, losslessly, so **Across JVMs** below the table shows one flame graph over all of them for the last 15 minutes to 7 days, rooted at session, then JVM, then activity, even for JVMs that have since exited.
+### JVMs: a profiler for every build your agents start
 
 <img src="docs/screenshots/jvm-across.webp" alt="Across JVMs: one flame graph over every recorded JVM, rooted at session, JVM and activity">
 
-With [async-profiler](https://github.com/async-profiler/async-profiler) installed (`brew install async-profiler`), a JVM's full view can also take a **capture**: a few seconds of CPU with allocation and locks, of wall clock across every thread, or of everything it offers (live objects, native memory, native locks). It asks first, because async-profiler's agent stays loaded in the JVM afterwards. Captures keep up to 4096 frames per stack by default (configurable). Each capture is kept for 30 days and can be shown as a flame graph, compared with another capture (red grew, blue shrank), opened in async-profiler's own HTML view, or downloaded as a `.jfr` for JMC.
+Most of the heavy lifting on a card is a JVM: an sbt server, Bloop, a Gradle daemon, a forked test run. A process list can tell you *which* one is pinning your cores, but not *why*: compiling, testing, resolving dependencies, or thrashing in GC. Nor can the agent waiting on that build. Press **Record** in the header and agentscope profiles every agent JVM (or every JVM of yours) continuously, picking each one up as it starts, so the answer is already there when you ask.
+
+**Across JVMs** is one flame graph over all of them, for any range from the last 15 minutes to the last 7 days, rooted at session, then kind of JVM, then activity, then frames. It answers questions a one-process profiler can't: which sessions' builds cost the most this week and doing what (scalac's typer, zinc, tests, dependency resolution); how much of yesterday went into one compiler phase across every sbt server; what a forked test JVM that exited hours ago was busy with. Every minute of every recording is kept losslessly for a week. It's continuous profiling in the style of Pyroscope or Parca, with nothing to deploy and every sample attributed to the session that started the build.
+
+**Activity** shows the same thing live, the way Gradle's console shows its workers: for every recorded JVM, grouped by session, each busy thread with what it's doing now and the frame that shows it, then one lane per thread (threads of a pool share one) over the last 5 or 30 minutes, coloured by activity. Activities come from rules that name compiler phases, test frameworks, dependency resolution and build tools, and each JVM's row and its session's card carry a line like *scalac: typer 62% · zinc 20%*. Drag across the lanes to pick the range for Across JVMs; click a lane to open that thread's profile.
+
+<img src="docs/screenshots/jvm-profile.webp" alt="A JVM's full view: sub-second heatmap, thread lanes and a flame graph of sbt compiling and testing">
+
+**A JVM's full view** (⤢) has a sub-second CPU heatmap, one lane per thread or thread pool coloured by what it's doing (on CPU, in native code, parked, blocked on a lock), and a flame graph of CPU, native, allocation, lock or park time. Drag across the heatmap or lanes to pick a range; click a thread's name to see only that thread.
+
+Every flame graph has the same controls. Click a frame to zoom in; Ctrl/⌘+scroll, pinch or Shift+drag zoom at the cursor, and detail appears as you zoom. Search takes a regex, shows what share matched, and Enter keeps it as a highlight. Filters stack and can each be removed: keep or hide the stacks through a pattern, hide one stack, merge a function away (lambda frames, recursion), or focus on a function (every call to it, merged). Right-click a frame for all of these, or press ? for the keys.
+
+**What it costs**: recordings are JFR with agentscope's own low-overhead settings, started with `jcmd`, so nothing is left loaded in the JVM. On a javac workload, CPU per compile was the same with and without the recording, within noise (`mise run bench-overhead`). Stacks are 512 frames deep by default, since JFR's default of 64 cuts off a compiler's recursion. Recordings stop when you press Stop or quit agentscope.
+
+Without recording, the JVMs table is a `top` for every JVM, read from the counters HotSpot already publishes for `jstat` (`hsperfdata`), so nothing attaches: CPU, heap against committed and max, GC share, allocation rate, threads, classes, and the last three hours per minute. **JVMs in trouble** in Loose ends lists any spending a fifth of their time in GC, staying near their max heap after collections, or running full GCs. An expanded row can take **snapshots**: two thread dumps a second apart (each thread with the CPU it used in between, deadlocks called out), heap, class histogram and native memory. With [async-profiler](https://github.com/async-profiler/async-profiler) installed, a JVM's full view can also take a **capture** (wall clock across every thread, allocation, locks, native memory), kept 30 days, diffable against another capture, and downloadable as a `.jfr` for JMC. Snapshots, recording and captures go through a small Java helper, built once with `mise run build-profiler`.
 
 The design, what was learned building it, and what's next are in [docs/jvm-profiler.md](docs/jvm-profiler.md).
 
