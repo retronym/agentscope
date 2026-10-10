@@ -553,6 +553,9 @@ def db_prune():
         profiles.prune(c, now)
         if _captures:
             _captures.prune(c, now)
+    swept = profiles.gc(db, now)
+    if swept and (swept["nodes"] or swept["vacuumed"]):
+        print(f"profiles gc: {swept}")
 
 
 SYSTEM_HINTS = ("/System/", "/usr/libexec", "/usr/sbin", "/sbin/", "/Library/SystemExtensions", "/Library/Apple/") + \

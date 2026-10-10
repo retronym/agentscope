@@ -7,10 +7,14 @@ Stored losslessly, the way JFR itself keeps them small: constant pools plus comp
   - tgroup: thread groups (names with their numbering wildcarded).
   - sample_blob: per JVM, minute and kind, one zlib-compressed run of varints: (thread group, node delta, weight)...
 A machine-wide flame graph for any range is then a decode and a walk up the tree: session → JVM → activity → frames.
+
+Minutes older than RETENTION_DAYS are dropped hourly; once a day, gc() then drops the pool rows that no remaining minute
+references (deep stacks make the prefix tree the bulk of the bytes, so it must not outlive the minutes that use it).
 """
-import collections, threading, zlib
+import collections, sqlite3, threading, time, zlib
 
 RETENTION_DAYS = 7
+GC_EVERY = 86400  # seconds between pool sweeps; the first prune after a start sweeps too
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS frame (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
@@ -24,11 +28,69 @@ CREATE INDEX IF NOT EXISTS sample_blob_t ON sample_blob (t);
 _lock = threading.Lock()
 _frames, _nodes, _groups = {}, {}, {}  # name -> id; (parent, frame) -> id; name -> id
 _helper_stacks = {}  # (helper gen, pid, helper stack id) -> node id: what this process has already interned
+_epoch = 0  # bumped whenever the caches are dropped, so a store_minute that looked at them before can tell
+_gc_at = 0
+
+
+def _forget():
+    global _epoch
+    for cache in (_frames, _nodes, _groups, _helper_stacks):
+        cache.clear()
+    _epoch += 1
 
 
 def prune(c, now):
     c.execute("DELETE FROM sample_blob WHERE t < ?", (now - RETENTION_DAYS * 86400,))
-    # the pools are shared and only grow with new code paths; they stay
+
+
+def gc(db, now=None, force=False):
+    """Delete node, frame and tgroup rows no remaining sample_blob references. Returns counts, or None if not due.
+    Mark: decode every blob for its leaves and groups, then walk up the parent links. A parent is always inserted
+    before its children and SQLite gives a new row max(id)+1, so parent < child: one pass down the ids marks every
+    ancestor. Runs under _lock, so no store_minute interleaves, and drops the caches, which may name swept rows."""
+    global _gc_at
+    now = time.time() if now is None else now
+    if not force and now - _gc_at < GC_EVERY:
+        return None
+    _gc_at = now
+    t = time.time()
+    with _lock:
+        with db() as c:
+            c.execute("BEGIN IMMEDIATE")
+            top = c.execute("SELECT MAX(id) FROM node").fetchone()[0] or 0
+            live, groups = bytearray(top + 1), set()
+            for (data,) in c.execute("SELECT data FROM sample_blob"):
+                for g, node, _ in decode(data):
+                    if 0 < node <= top:
+                        live[node] = 1
+                    groups.add(g)
+            dead = []
+            for i, parent in c.execute("SELECT id, parent FROM node ORDER BY id DESC"):
+                if live[i]:
+                    live[parent] = 1
+                else:
+                    dead.append((i,))
+            c.executemany("DELETE FROM node WHERE id = ?", dead)
+            frames = c.execute("DELETE FROM frame WHERE id NOT IN (SELECT frame FROM node)").rowcount
+            c.execute("CREATE TEMP TABLE IF NOT EXISTS live_group (id INTEGER PRIMARY KEY)")
+            c.execute("DELETE FROM live_group")
+            c.executemany("INSERT INTO live_group VALUES (?)", [(g,) for g in groups])
+            tgroups = c.execute("DELETE FROM tgroup WHERE id NOT IN (SELECT id FROM live_group)").rowcount
+            _forget()
+        # freed pages are reused by the pools' growth; give them back only when they are most of the file (say, the
+        # first sweep of a database that grew before there was one, or after recording stopped for a while)
+        with db() as c:
+            free, pages = c.execute("PRAGMA freelist_count").fetchone()[0], c.execute("PRAGMA page_count").fetchone()[0]
+        vacuumed = free > pages // 2
+        if vacuumed:
+            c = db()
+            try:
+                c.execute("VACUUM")
+            except sqlite3.OperationalError:  # busy: the pages stay free for reuse, and the next sweep tries again
+                vacuumed = False
+            finally:
+                c.close()
+    return dict(nodes=len(dead), frames=frames, tgroups=tgroups, free_pages=free, pages=pages, vacuumed=vacuumed, secs=round(time.time() - t, 1))
 
 
 # ---------------------------------------------------------------------------------------------- varints
@@ -105,15 +167,18 @@ def store_minute(db, helper, gen, pid, jvm_id, t):
     m = helper.call("minute", pid=pid, t0=t * 1000, t1=(t + 60) * 1000)["minute"]
     if not m["rows"]:
         return 0, 0
-    unknown = sorted({sid for _, _, sid, _ in m["rows"] if sid >= 0 and (gen, pid, sid) not in _helper_stacks})
-    defs = helper.call("stacks", pid=pid, ids=unknown)["stacks"] if unknown else dict(frames=[], stacks=[])
-    with _lock:
-        try:
-            return _store(db, gen, pid, jvm_id, t, m, defs)
-        except Exception:
-            for cache in (_frames, _nodes, _groups, _helper_stacks):  # the transaction rolled back: so must the caches
-                cache.clear()
-            raise
+    while True:
+        epoch = _epoch
+        unknown = sorted({sid for _, _, sid, _ in m["rows"] if sid >= 0 and (gen, pid, sid) not in _helper_stacks})
+        defs = helper.call("stacks", pid=pid, ids=unknown)["stacks"] if unknown else dict(frames=[], stacks=[])
+        with _lock:
+            if epoch != _epoch:  # the caches were dropped since we asked which stacks are unknown: ask again
+                continue
+            try:
+                return _store(db, gen, pid, jvm_id, t, m, defs)
+            except Exception:
+                _forget()  # the transaction rolled back: so must the caches
+                raise
 
 
 def _store(db, gen, pid, jvm_id, t, m, defs):
@@ -165,6 +230,7 @@ def flame(db, t0, t1, kind="cpu", reverse=False, labels=None, min_share=0.002, p
     below `path` (the page's zoom), where the share is of the zoomed subtree: detail appears as you zoom in."""
     acc = collections.Counter()
     with db() as c:
+        c.execute("BEGIN")  # one snapshot for the blobs and the tree they reference, should a gc() commit in between
         blobs = c.execute("SELECT jvm_id, data FROM sample_blob WHERE t >= ? AND t < ? AND kind = ?", (t0, t1, kind)).fetchall()
         span = c.execute("SELECT MIN(t), MAX(t), COUNT(*), SUM(LENGTH(data)) FROM sample_blob WHERE t >= ? AND t < ? AND kind = ?", (t0, t1, kind)).fetchone()
         for jvm_id, data in blobs:
