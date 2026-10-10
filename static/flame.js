@@ -90,6 +90,14 @@ const Flame = (() => {
     v.tree = t;
     v.root = zoomRoot(v);
   }
+  // Zooming: set the path, reveal the new root, and ask the host for detail below it (the server prunes small nodes
+  // relative to the whole graph, except along and below the zoom path).
+  function zoomTo(v, path) {
+    v.path = path; v.zf = 1; v.pan = 0; v.root = zoomRoot(v);
+    v.reveal = true;
+    clearTimeout(v.zoomT);
+    v.zoomT = setTimeout(() => v.opts?.onZoom?.(v.path.slice()), 150);
+  }
   // the zoom root: the deepest node along the zoom path that still exists after filtering
   function zoomRoot(v) {
     let n = v.tree, anc = [];
@@ -198,8 +206,8 @@ const Flame = (() => {
       case 'restore': v.ops = []; apply(v); break;
       case 'zin': return zoomBy(v, 1.5, 0.5);
       case 'zout': return zoomBy(v, 1 / 1.5, 0.5);
-      case 'z1': v.zf = 1; v.pan = 0; v.path = []; v.root = zoomRoot(v); break;
-      case 'zpath': v.path = v.path.slice(0, +arg); v.zf = 1; v.pan = 0; v.root = zoomRoot(v); break;
+      case 'z1': zoomTo(v, []); break;
+      case 'zpath': zoomTo(v, v.path.slice(0, +arg)); break;
       case 'flip': v.icicle = !v.icicle; break;
       case 'names': v.longNames = !v.longNames; break;
       case 'help': v.help = !v.help; break;
@@ -224,7 +232,7 @@ const Flame = (() => {
     (function walk(n, path) { for (const c of n.k) { const p = path.concat(c.n); if (t(c)) hits.push(p); else walk(c, p); } })(v.tree, []);
     if (!hits.length) return;
     v.navIdx = (v.navIdx + d + hits.length) % hits.length;
-    v.path = hits[v.navIdx]; v.zf = 1; v.pan = 0; v.root = zoomRoot(v);
+    zoomTo(v, hits[v.navIdx]);
     toolbar(v); draw(v);
   }
 
@@ -301,6 +309,13 @@ const Flame = (() => {
       for (const c of n.k) { walk(c, row + 1, cx, m); cx += c.v; }
     };
     walk(R, A, 0, false);
+    if (v.reveal) {  // after a zoom: the root (with a row of context above it) in view, in the graph's box and the page
+      v.reveal = false;
+      const wrap = c.parentElement, y = yOf(A);
+      wrap.scrollTop = v.icicle ? Math.max(0, y - ROW * 2) : Math.max(0, y - wrap.clientHeight + ROW * 3);
+      const b = v.el.getBoundingClientRect();
+      if (b.top < 0 || b.top > innerHeight - 120) v.el.scrollIntoView({ block: 'nearest' });
+    }
     if (!R.v) { g.fillStyle = css('--muted'); g.fillText('nothing left after the filters', 4, yOf(A) + ROW / 2); }
   }
 
@@ -345,7 +360,7 @@ const Flame = (() => {
       v.ops.push({ op: 'hidepath', label: p.map(x => label(v, x)).slice(-2).join(' › '), path: p });
       apply(v);
     } else {
-      v.path = pathTo(v, r); v.zf = 1; v.pan = 0; v.root = zoomRoot(v);
+      zoomTo(v, pathTo(v, r));
     }
     toolbar(v); draw(v);
   }
@@ -395,7 +410,7 @@ const Flame = (() => {
       const k = ev.target.dataset.k; if (!k) return;
       closeMenu(); hideTip();
       const t = exact(name);
-      if (k === 'zoom') { v.path = pathTo(v, r); v.zf = 1; v.pan = 0; v.root = zoomRoot(v); }
+      if (k === 'zoom') zoomTo(v, pathTo(v, r));
       else if (k === 'focus') { v.ops.push({ op: 'focus', label: short, test: t }); v.path = []; apply(v); }
       else if (k === 'merge') { v.ops.push({ op: 'merge', label: short, test: t }); apply(v); }
       else if (k === 'keepfn') { v.ops.push({ op: 'keep', label: short, test: t }); apply(v); }

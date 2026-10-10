@@ -3,6 +3,7 @@ package agentscope.profiler;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +35,13 @@ class RecordingsTest {
       Map<String, Object> flame = p.flame(t0, Long.MAX_VALUE, "cpu", List.of((Long) top.get("tid")), 0.002, false);
       assertTrue((long) flame.get("samples") > 50, flame.toString());
       assertTrue(flame.toString().contains("agentscope.profiler.Fixture.lambda$main$"), flame.toString());
+      // a coarse threshold hides detail; zooming along a path brings it back below that path
+      Map<String, Object> coarse = p.flame(t0, Long.MAX_VALUE, "cpu", List.of((Long) top.get("tid")), 0.5, false);
+      List<Object> cr = (List<Object>) coarse.get("root");
+      List<String> path = new ArrayList<>();
+      for (List<Object> n = cr; !((List<?>) n.get(2)).isEmpty(); n = ((List<List<Object>>) n.get(2)).getFirst()) path.add((String) ((List<List<Object>>) n.get(2)).getFirst().get(0));
+      Map<String, Object> zoomed = p.flame(t0, Long.MAX_VALUE, "cpu", List.of((Long) top.get("tid")), 0.5, false, path.subList(0, Math.max(1, path.size() - 1)));
+      assertTrue(zoomed.toString().length() >= coarse.toString().length(), "zooming never shows less");
       // reversed, the root's children are leaves (where time is spent), and Thread.run is deep down, not at the top
       List<Object> rev = (List<Object>) p.flame(t0, Long.MAX_VALUE, "cpu", List.of((Long) top.get("tid")), 0.002, true).get("root");
       List<List<Object>> leaves = (List<List<Object>>) rev.get(2);

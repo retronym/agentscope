@@ -1005,6 +1005,16 @@ def build_state(sampler):
                               for h in hist[-720:]])
 
 
+def zoom_path(q):
+    """A flame graph's zoom path, from ?path=<JSON list of frame names>."""
+    from urllib.parse import unquote
+    try:
+        p = json.loads(unquote(q.get("path", "")) or "[]")
+        return [str(x) for x in p] if isinstance(p, list) else []
+    except ValueError:
+        return []
+
+
 def jvm_labels(jvm_id, _cache={}):
     """(session title, JVM label) for the machine-wide flame graph's first two levels."""
     if time.time() - _cache.get(jvm_id, (0,))[0] > 60:  # sessions get attributed late; don't keep "no session" forever
@@ -1111,7 +1121,7 @@ def serve(port):
                     pid = sampler.recorder.pid_of(int(q.get("id", 0)))
                     threads = [int(x) for x in q.get("threads", "").split(",") if x.lstrip("-").isdigit()]
                     r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
-                                     kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1")
+                                     kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1", path=zoom_path(q))
                     self._send(200, json.dumps(r["flame"]), "application/json")
                 elif path == "/api/activity":
                     w = int(q.get("window", 300))
@@ -1120,7 +1130,7 @@ def serve(port):
                     self._send(200, json.dumps(_captures.list(int(q["jvm"]) if q.get("jvm") else None)), "application/json")
                 elif path == "/api/capture/flame":
                     self._send(200, json.dumps(_captures.flame(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("reverse") == "1",
-                                                               int(q["base"]) if q.get("base") else None)), "application/json")
+                                                               int(q["base"]) if q.get("base") else None, zoom_path(q))), "application/json")
                 elif path == "/api/capture/html":
                     self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu")), "text/html; charset=utf-8")
                 elif path == "/api/capture/file":
@@ -1134,7 +1144,7 @@ def serve(port):
                     self.wfile.write(data)
                 elif path == "/api/jvms/flame":
                     self._send(200, json.dumps(profiles.flame(db, float(q.get("t0", 0)), float(q.get("t1", time.time() + 60)), q.get("kind", "cpu"),
-                                                              q.get("reverse") == "1", jvm_labels)), "application/json")
+                                                              q.get("reverse") == "1", jvm_labels, path=zoom_path(q))), "application/json")
                 elif path == "/api/load":
                     self._send(200, json.dumps(load_history(float(q.get("since", time.time() - 86400)))), "application/json")
                 else:

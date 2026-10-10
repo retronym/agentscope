@@ -127,7 +127,7 @@ table.jt.caps .btn-link.on { border-color: var(--accent); color: var(--ink); }
 @media (max-width: 700px) { .actline { grid-template-columns: 10px 1fr; } .actline .actthread, .actline .actframe { display: none; } }
 /* flame graphs (static/flame.js) */
 .fg { outline: none; position: relative; }
-.fg-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; margin: 2px 0 6px; position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 2px 0; }
+.fg-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; margin: 2px 0 6px; padding: 2px 0; }  /* not sticky: the graph scrolls in its own box below */
 .fg-bar button { font-size: 12px; padding: 2px 8px; }
 .fg-bar button:disabled { opacity: .45; cursor: default; }
 .fg-t.on { background: var(--ink); color: var(--page); }

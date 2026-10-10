@@ -159,9 +159,10 @@ def _paths(c, leaves):
     return {leaf: (path(leaf), nodes[leaf][2] if leaf in nodes else None) for leaf in leaves if leaf in nodes or leaf == 0}
 
 
-def flame(db, t0, t1, kind="cpu", reverse=False, labels=None, min_share=0.002):
+def flame(db, t0, t1, kind="cpu", reverse=False, labels=None, min_share=0.002, path=()):
     """[name, value, children] over every recorded JVM in [t0, t1): session → JVM → activity → frames (or reversed).
-    labels(jvm_id) -> (session label, JVM label)."""
+    labels(jvm_id) -> (session label, JVM label). Nodes under min_share of the total are left out, except along and
+    below `path` (the page's zoom), where the share is of the zoomed subtree: detail appears as you zoom in."""
     acc = collections.Counter()
     with db() as c:
         blobs = c.execute("SELECT jvm_id, data FROM sample_blob WHERE t >= ? AND t < ? AND kind = ?", (t0, t1, kind)).fetchall()
@@ -186,9 +187,22 @@ def flame(db, t0, t1, kind="cpu", reverse=False, labels=None, min_share=0.002):
             n = n[2].setdefault((name, meta), [name, 0, {}, meta])
             n[1] += w
 
-    def out(n, name):
-        kids = sorted((k for k in n[2].values() if k[1] >= max(1, total * min_share)), key=lambda k: -k[1])
-        return [name, n[1], [out(k, k[0]) for k in kids]] + ([1] if len(n) > 3 and n[3] else [])
+    at, node = total, root
+    for p in path:
+        node = next((k for k in node[2].values() if k[0] == p), None)
+        if node is None:
+            at = total
+            break
+        at = node[1]
+    lo, lo_path = max(1, total * min_share), max(1, at * min_share)
+
+    def out(n, name, depth=0, inside=not path):
+        kids = []
+        for k in sorted(n[2].values(), key=lambda k: -k[1]):
+            on = not inside and depth < len(path) and k[0] == path[depth]
+            if k[1] >= (lo_path if inside or on else lo):
+                kids.append(out(k, k[0], depth + 1, inside or (on and depth + 1 == len(path))))
+        return [name, n[1], kids] + ([1] if len(n) > 3 and n[3] else [])
 
     return dict(kind=kind, reverse=reverse, total=total, t0=t0, t1=t1, first=span[0], last=span[1], minutes=span[2], bytes=span[3] or 0, root=out(root, "all"))
 

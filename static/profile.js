@@ -80,7 +80,7 @@ async function loadProfile(id, force) {
     const since = Date.now() / 1000 - p.window;
     p.summary = await api(`/api/jvm/summary?id=${id}&since=${since}&bins=${Math.min(300, p.window)}`);
     const [t0, t1] = p.sel || [since, Date.now() / 1000 + 5];
-    p.flame = await api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread ? p.thread.tid : ''}&reverse=${p.reverse ? 1 : 0}`);
+    p.flame = await api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread ? p.thread.tid : ''}&reverse=${p.reverse ? 1 : 0}${zq(p)}`);
     p.error = null;
   } catch (e) { p.error = String(e.message || e); }
   p.busy = false; p.fetched = Date.now();
@@ -192,6 +192,8 @@ function brush(c, id, w, s, laneAt) {
 // ---------------------------------------------------------------- flame graph (icicle: root on top), click to zoom
 const unit = (kind, v) => kind === 'cpu' || kind === 'native' || kind === 'wall' ? `${v} samples` : kind === 'alloc' ? mb(v) + ' allocated (sampled)' :
   kind === 'live' ? mb(v) + ' live' : kind === 'nativemem' ? mb(v) + ' malloc\'d' : `${(v / 1000).toFixed(1)} s waited`;
+// The flame graph's zoom path, for detail below it (the server prunes small nodes relative to the zoomed subtree there)
+const zq = p => p.zpath?.length ? '&path=' + encodeURIComponent(JSON.stringify(p.zpath)) : '';
 // Flame graphs are static/flame.js; this hands each one its data and a title.
 function drawFlame(id) {
   const p = prof[id], el = document.getElementById(`fg-${id}`);
@@ -202,7 +204,8 @@ function drawFlame(id) {
     : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM'
     : p.sel ? 'selected range' : 'whole window';
   const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · thread ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>`;
-  Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r }) });
+  Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),
+    onZoom: path => { p.zpath = path; p.load ? p.load() : id === 'all' ? loadAllFlame(true) : loadProfile(id, true); } });
 }
 const shortName = n => n.replace(/^([a-z_$][\w$]*\.)+(?=[A-Z_$][\w$]*[.$])/, m => m.split('.').filter(Boolean).map(x => x[0]).join('.') + '.');
 function frameColor(name, dark) {
@@ -235,7 +238,7 @@ async function loadAllFlame(force) {
   p.busy = true;
   // a range brushed on the Activity lanes, or the last N; stored per minute, so widen to whole minutes
   const [t0, t1] = p.abs ? [Math.floor(p.abs[0] / 60) * 60, Math.ceil(p.abs[1] / 60) * 60] : [Date.now() / 1000 - p.range, Date.now() / 1000 + 60];
-  try { p.flame = await api(`/api/jvms/flame?t0=${t0}&t1=${t1}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}`); p.error = null; }
+  try { p.flame = await api(`/api/jvms/flame?t0=${t0}&t1=${t1}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${zq(p)}`); p.error = null; }
   catch (e) { p.error = String(e.message || e); }
   p.busy = false; p.fetched = Date.now();
   drawFlame('all');

@@ -241,6 +241,11 @@ public final class Profile {
    * {@code reverse}: from the leaves instead (where time is spent first, then who called it).
    */
   public synchronized Map<String, Object> flame(long t0, long t1, String kindName, List<Long> threadFilter, double minShare, boolean reverse) {
+    return flame(t0, t1, kindName, threadFilter, minShare, reverse, List.of());
+  }
+
+  /** As {@link #flame}, with full detail (relative to it) below the zoom {@code path}. */
+  public synchronized Map<String, Object> flame(long t0, long t1, String kindName, List<Long> threadFilter, double minShare, boolean reverse, List<String> path) {
     int kind = KINDS.indexOf(kindName);
     if (kind < 0) throw new IllegalArgumentException("kind: one of " + KINDS);
     boolean[] want = null;
@@ -275,7 +280,9 @@ public final class Profile {
     out.put("reverse", reverse);
     out.put("total", total);
     out.put("samples", n);
-    out.put("root", root.toJson(frames, Math.max(1, (long) (total * minShare)), "all"));
+    long min = Math.max(1, (long) (total * minShare)), at = path.isEmpty() ? -1 : root.valueAt(frames, path);
+    out.put("root", root.toJson(frames, min, "all", path, 0, false, at > 0 ? Math.max(1, (long) (at * minShare)) : min));
+    if (!path.isEmpty()) out.put("path", path);
     return out;
   }
 
@@ -534,13 +541,39 @@ public final class Profile {
     }
 
     List<Object> toJson(List<String> frames, long min, String name) {
+      return toJson(frames, min, name, List.of(), 0, false, min);
+    }
+
+    /**
+     * Nodes under {@code min} are left out, except along and below {@code path} (the client's zoom), where the
+     * threshold is {@code minPath}, relative to the zoomed subtree: detail appears as you zoom in, while the rest of
+     * the tree stays as small as before.
+     */
+    List<Object> toJson(List<String> frames, long min, String name, List<String> path, int depth, boolean inside, long minPath) {
       List<Object> kidsOut = new ArrayList<>();
       if (kids != null) {
         List<Node> ks = new ArrayList<>(kids.values());
         ks.sort((a, b) -> Long.compare(b.value, a.value));
-        for (Node k : ks) if (k.value >= min) kidsOut.add(k.toJson(frames, min, frames.get(k.frame)));
+        for (Node k : ks) {
+          String kn = frames.get(k.frame);
+          boolean onPath = !inside && depth < path.size() && kn.equals(path.get(depth));
+          boolean in = inside || onPath && depth + 1 == path.size();
+          if (k.value >= (inside || onPath ? minPath : min)) kidsOut.add(k.toJson(frames, min, kn, path, depth + 1, in, minPath));
+        }
       }
       return List.of(name, value, kidsOut);
+    }
+
+    /** The value of the node at a path of frame names below this one, or -1. */
+    long valueAt(List<String> frames, List<String> path) {
+      Node n = this;
+      for (String p : path) {
+        Node next = null;
+        if (n.kids != null) for (Node k : n.kids.values()) if (frames.get(k.frame).equals(p)) { next = k; break; }
+        if (next == null) return -1;
+        n = next;
+      }
+      return n.value;
     }
   }
 

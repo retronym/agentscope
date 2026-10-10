@@ -96,7 +96,7 @@ public final class Main {
           List<Long> threads = new ArrayList<>();
           if (req.get("threads") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) threads.add(n.longValue());
           resp.put("flame", recordings.profile(pid(req)).flame(num(req, "t0", 0), num(req, "t1", Long.MAX_VALUE),
-              String.valueOf(req.getOrDefault("kind", "cpu")), threads, 0.002, Boolean.TRUE.equals(req.get("reverse"))));
+              String.valueOf(req.getOrDefault("kind", "cpu")), threads, 0.002, Boolean.TRUE.equals(req.get("reverse")), names(req, "path")));
         }
         case "capture_stats" -> resp.put("stats", captures.load(path(req, "path")).stats());
         case "capture_flame" -> {
@@ -106,7 +106,7 @@ public final class Main {
           boolean reverse = Boolean.TRUE.equals(req.get("reverse"));
           resp.put("flame", req.get("base") != null
               ? Profile.diff(captures.load(path(req, "base")), captures.load(path(req, "path")), kind, reverse, 0.002)
-              : captures.load(path(req, "path")).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse));
+              : captures.load(path(req, "path")).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse, names(req, "zoom")));
         }
         default -> throw new IllegalArgumentException("unknown op: " + op);
       }
@@ -126,6 +126,12 @@ public final class Main {
   private static java.nio.file.Path path(Map<String, Object> req, String key) {
     if (req.get(key) instanceof String s && s.endsWith(".jfr")) return java.nio.file.Path.of(s);
     throw new IllegalArgumentException(key + ": a .jfr file required");
+  }
+
+  private static List<String> names(Map<String, Object> req, String key) {
+    List<String> out = new ArrayList<>();
+    if (req.get(key) instanceof List<?> l) for (Object o : l) out.add(String.valueOf(o));
+    return out;
   }
 
   private static long num(Map<String, Object> req, String key, long dflt) {

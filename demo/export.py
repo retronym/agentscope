@@ -245,7 +245,7 @@ class Names:
         return f"/home/demo/code/{self.map_lane(lane) if lane else 'misc'}" + (f"/.worktrees/{name}" if ".worktrees" in p else "")
 
 
-JVM_LABELS = {label for _, label in A.jvm.KNOWN} - {"JetBrains Toolbox"}  # vendor names can be real GitHub owners
+JVM_LABELS = {label for _, label in A.jvm.KNOWN} - {"JetBrains Toolbox", "Coursier"}  # tool and vendor names can be real repo or owner names
 
 
 def map_jvm_label(label):

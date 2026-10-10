@@ -98,8 +98,8 @@ class Captures:
             raise ValueError("no such capture")
         return r[0]
 
-    def flame(self, cid, kind, reverse=False, base=None):
-        args = dict(path=self.path(cid), kind=kind, reverse=reverse)
+    def flame(self, cid, kind, reverse=False, base=None, zoom=None):
+        args = dict(path=self.path(cid), kind=kind, reverse=reverse, zoom=zoom or [])
         if base:
             args["base"] = self.path(base)
         return self.helper.call("capture_flame", timeout=120, **args)["flame"]

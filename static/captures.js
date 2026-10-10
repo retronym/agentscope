@@ -67,7 +67,7 @@ function showCapture(jvmId, cid, kind) {
 function setCapBase(cid, base) { const p = prof['cap' + cid]; p.base = base ? +base : null; p.zoom = []; loadCapFlame('cap' + cid); }
 async function loadCapFlame(key) {
   const p = prof[key];
-  try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}`); p.error = null; }
+  try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}${zq(p)}`); p.error = null; }
   catch (e) { p.error = String(e.message || e); p.flame = null; }
   renderCaptures(p.jvm);
 }
