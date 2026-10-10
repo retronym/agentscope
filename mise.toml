@@ -41,3 +41,12 @@ run = "cd profiler && ./mvnw -q -B package"
 [tasks.bench-overhead]
 description = "Measure the slowdown agentscope's JFR recording causes on a javac workload (about 7 minutes)"
 run = "cd profiler && ./mvnw -q -B test-compile && java --add-exports jdk.attach/sun.tools.attach=ALL-UNNAMED -cp target/classes:target/test-classes:$(./mvnw -q -B dependency:build-classpath -Dmdep.outputFile=/dev/stdout) agentscope.profiler.OverheadBench 60 15 10"
+
+[tasks.check]
+description = "Parse every page script and compile the Python (catches a broken static/*.js before it blanks the page)"
+run = """
+set -e
+for f in static/*.js; do node -e "new Function(require('fs').readFileSync('$f','utf8'))" || { echo "syntax error in $f"; exit 1; }; done
+python3 -m py_compile agentscope.py jvm.py helper.py recording.py profiles.py captures.py demo/export.py
+echo "ok"
+"""
