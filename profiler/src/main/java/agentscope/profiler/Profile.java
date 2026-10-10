@@ -21,6 +21,9 @@ import java.util.Map;
 public final class Profile {
   public static final long WINDOW_MS = 30 * 60_000;
 
+  /** A thread using less than this (cores) is waiting, whatever its stack says. */
+  static final double MIN_BUSY_CORES = 0.05;
+
   /** Sample kinds, also the {@code kind} names queries take. The last four come from async-profiler captures. */
   public static final int CPU = 0, NATIVE = 1, ALLOC = 2, LOCK = 3, PARK = 4, WALL = 5, LIVE = 6, NATIVEMEM = 7, NATIVELOCK = 8;
   static final List<String> KINDS = List.of("cpu", "native", "alloc", "lock", "park", "wall", "live", "nativemem", "nativelock");
@@ -381,11 +384,31 @@ public final class Profile {
     Map<Integer, Map<Long, int[]>> cells = new HashMap<>();  // thread -> (bin << 16 | activity) -> count
     Map<Integer, long[]> totals = new HashMap<>();  // thread -> [samples, samples in the "now" window]
     Map<Integer, Integer> latest = new HashMap<>();  // thread -> index of its latest sample
+    // A native sample only says a thread was in native code, busy or blocked (a file watcher's run loop, accept()).
+    // It counts as activity only when the thread also used CPU in that bin (jdk.ThreadCPULoad).
+    Map<Integer, double[]> cores = new HashMap<>();  // thread -> per bin: [sum of loads, n]
+    Map<Integer, double[]> coresNow = new HashMap<>();
+    for (int i = cpu.lo; i < cpu.n; i++) {
+      if (cpu.t[i] < since) continue;
+      int b = (int) ((cpu.t[i] - since) / bin);
+      if (b >= nbins) continue;
+      double load = cpu.w[i] / 10_000.0;
+      double[] c = cores.computeIfAbsent(cpu.a[i], x -> new double[2 * nbins]);
+      c[2 * b] += load;
+      c[2 * b + 1]++;
+      if (cpu.t[i] >= now - nowMs) coresNow.merge(cpu.a[i], new double[]{load}, (x, y) -> new double[]{Math.max(x[0], y[0])});
+    }
     for (int i = samples.lo; i < samples.n; i++) {
       int kind = samples.c[i];
       if ((kind != CPU && kind != NATIVE) || samples.t[i] < since) continue;
       int th = samples.a[i];
       if (th < 0) continue;
+      if (kind == NATIVE) {
+        int b = (int) ((samples.t[i] - since) / bin);
+        double[] c = cores.get(th);
+        if (c == null || b >= nbins || c[2 * b + 1] == 0 || c[2 * b] / c[2 * b + 1] < MIN_BUSY_CORES) continue;
+        if (samples.t[i] >= now - nowMs && coresNow.getOrDefault(th, new double[1])[0] < MIN_BUSY_CORES) continue;
+      }
       int act = actIndex.computeIfAbsent(activity(samples.b[i]), x -> actIndex.size());
       long b = (samples.t[i] - since) / bin;
       cells.computeIfAbsent(th, x -> new HashMap<>()).computeIfAbsent(b << 16 | act, x -> new int[1])[0]++;

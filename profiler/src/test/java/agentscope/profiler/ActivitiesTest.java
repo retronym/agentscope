@@ -17,6 +17,7 @@ class ActivitiesTest {
     assertEquals("scala 3: typer", of("dotty.tools.dotc.Run.compile", "dotty.tools.dotc.typer.Typer.typed"));
     assertEquals("zinc", of("sbt.internal.inc.IncrementalCompile.apply", "java.util.zip.ZipFile.getEntry"));
     assertEquals("test", of("sbt.ForkMain.main", "org.scalatest.Suite.run", "com.example.MySpec.test"));
+    assertEquals("file watching", of("java.lang.Thread.run", "com.swoval.files.apple.FileEventMonitorImpl$1.run", "com.swoval.files.apple.FileEventMonitorImpl.access$800 [Native]"));
   }
 
   @Test

@@ -148,8 +148,8 @@ function drawProfile(id) {
         const busy = Math.min(1, cpu || ns * 0.02 / binS);
         if (lock > 0) { g.fillStyle = lockC; g.globalAlpha = Math.min(1, .35 + lock / (s.bin) ); g.fillRect(x, y + 2, Math.ceil(cw), ROW_H - 4); }
         else if (busy > 0.01) { g.fillStyle = cpuC; g.globalAlpha = .25 + .75 * busy; g.fillRect(x, y + 2, Math.ceil(cw), ROW_H - 4); }
-        else if (nat > 0) { g.fillStyle = natC; g.globalAlpha = .6; g.fillRect(x, y + 2, Math.ceil(cw), ROW_H - 4); }
-        else if (park > 0) { g.fillStyle = parkC; g.globalAlpha = .5; g.fillRect(x, y + ROW_H / 2 - 1, Math.ceil(cw), 2); }
+        else if (nat > 0 && cpu >= 0.05) { g.fillStyle = natC; g.globalAlpha = .6; g.fillRect(x, y + 2, Math.ceil(cw), ROW_H - 4); }
+        else if (park > 0 || nat > 0) {  // in native code but not using CPU: waiting (a file watcher, accept()), drawn like parked g.fillStyle = parkC; g.globalAlpha = .5; g.fillRect(x, y + ROW_H / 2 - 1, Math.ceil(cw), 2); }
         g.globalAlpha = 1;
       }
     });

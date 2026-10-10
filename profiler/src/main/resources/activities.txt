@@ -29,6 +29,7 @@ org\.gradle\.	gradle
 org\.apache\.maven\.	maven
 bloop\.	bloop
 scala\.meta\.internal\.metals\.|scala\.meta\.	metals
+com\.swoval\.	file watching
 sbt\.	sbt
 # Commonly hot, whoever calls them
 java\.util\.zip\.|java\.util\.jar\.	zip / jar
