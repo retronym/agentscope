@@ -105,3 +105,23 @@ table.jt.caps td { white-space: normal; }
 table.jt.caps tr.open td { background: var(--surface-2); }
 table.jt.caps .btn-link.on { border-color: var(--accent); color: var(--ink); }
 .flamewrap { max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; }  /* deep stacks scroll, rather than push everything below off-screen */
+/* Activity: what every recorded JVM's threads are doing */
+#jvmactivity { margin-bottom: 12px; }
+.actpanel { padding: 8px 12px 10px; }
+.actsess { font-size: 12px; margin: 8px 0 2px; }
+.actsess:first-child { margin-top: 0; }
+.actsess a { text-decoration: none; color: var(--ink-2); }
+.actjvm { font-size: 12.5px; margin: 4px 0 2px 4px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.actjvm a { text-decoration: none; font-weight: 600; }
+.actjvm b { font-weight: 600; }
+.actline { display: grid; grid-template-columns: 10px minmax(110px, 180px) minmax(90px, 200px) 1fr; gap: 8px; align-items: center; font-size: 12px; padding: 1px 0 1px 18px; cursor: pointer; border-radius: 4px; }
+.actline:hover { background: var(--surface-2); }
+.actline i { width: 9px; height: 9px; border-radius: 2px; }
+.actline .actname { font-weight: 500; }
+.actline .actthread { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actline .actframe { font: 11px var(--font-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actlanes { margin-top: 10px; }
+.actlanes canvas { display: block; width: 100%; cursor: crosshair; }
+.actlegend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-2); margin-top: 6px; }
+.actlegend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+@media (max-width: 700px) { .actline { grid-template-columns: 10px 1fr; } .actline .actthread, .actline .actframe { display: none; } }

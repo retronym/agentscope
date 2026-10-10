@@ -126,6 +126,8 @@ function renderJvms() {
   patch($('#jvms'), list.length ? jvmTable(list, true) : `<div class="empty" style="padding:10px 12px">${all.length ? 'no JVMs match the filter' : 'no JVMs running (or none publishing perf data)'}</div>`);
   for (const id of openJvms) if (!jvmHistCache[id]) loadJvmHist(id);
   renderJvmBox();
+  renderActivity();
+  loadActivity();
   renderAllFlame();
 }
 

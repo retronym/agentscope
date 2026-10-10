@@ -31,7 +31,7 @@ public final class Profile {
   private final List<String> frames = new ArrayList<>();
   private final Map<IntArray, Integer> stackIds = new HashMap<>();
   private final List<int[]> stacks = new ArrayList<>();  // frame ids, root first
-  private final List<String> stackActivity = new ArrayList<>();  // by stack id, classified lazily
+  private final List<Activities.Activity> stackActivity = new ArrayList<>();  // by stack id, classified lazily
   private final Map<Long, Integer> threadIds = new HashMap<>();
   private final List<String> threadNames = new ArrayList<>();
   private final List<Long> threadJavaIds = new ArrayList<>();
@@ -276,16 +276,19 @@ public final class Profile {
     return out;
   }
 
-  private String activity(int stack) {
-    if (stack < 0) return "?";
+  private Activities.Activity explain(int stack) {
     while (stackActivity.size() <= stack) stackActivity.add(null);
-    String a = stackActivity.get(stack);
+    Activities.Activity a = stackActivity.get(stack);
     if (a == null) {
       List<String> names = new ArrayList<>();
       for (int f : stacks.get(stack)) names.add(frames.get(f));
-      stackActivity.set(stack, a = Activities.classify(names));
+      stackActivity.set(stack, a = Activities.explain(names));
     }
     return a;
+  }
+
+  private String activity(int stack) {
+    return stack < 0 ? "?" : explain(stack).label();
   }
 
   /** What the JVM's threads have been doing since {@code since}: CPU samples and distinct threads per activity, busiest first. */
@@ -362,6 +365,81 @@ public final class Profile {
     m.put("first", first == Long.MAX_VALUE ? null : first);
     m.put("last", last == 0 ? null : last);
     return m;
+  }
+
+  /**
+   * What each thread has been doing, for the Gradle-style live view: per thread, the dominant activity of its CPU and
+   * native samples in each time bin over [since, now], and what it's doing right now (its latest sample within
+   * {@code nowMs}: activity and top Java frame). Busiest threads first, at most {@code maxThreads}.
+   */
+  public synchronized Map<String, Object> threadActivity(long since, int maxBins, long nowMs, int maxThreads) {
+    long now = Math.max(last, since);
+    long span = Math.max(1000, now - since);
+    long bin = Math.max(1000, (span / maxBins + 999) / 1000 * 1000);
+    int nbins = (int) (span / bin) + 1;
+    Map<String, Integer> actIndex = new LinkedHashMap<>();
+    Map<Integer, Map<Long, int[]>> cells = new HashMap<>();  // thread -> (bin << 16 | activity) -> count
+    Map<Integer, long[]> totals = new HashMap<>();  // thread -> [samples, samples in the "now" window]
+    Map<Integer, Integer> latest = new HashMap<>();  // thread -> index of its latest sample
+    for (int i = samples.lo; i < samples.n; i++) {
+      int kind = samples.c[i];
+      if ((kind != CPU && kind != NATIVE) || samples.t[i] < since) continue;
+      int th = samples.a[i];
+      if (th < 0) continue;
+      int act = actIndex.computeIfAbsent(activity(samples.b[i]), x -> actIndex.size());
+      long b = (samples.t[i] - since) / bin;
+      cells.computeIfAbsent(th, x -> new HashMap<>()).computeIfAbsent(b << 16 | act, x -> new int[1])[0]++;
+      long[] tot = totals.computeIfAbsent(th, x -> new long[2]);
+      tot[0]++;
+      if (samples.t[i] >= now - nowMs) {
+        tot[1]++;
+        latest.put(th, i);
+      }
+    }
+    List<Integer> order = new ArrayList<>(totals.keySet());
+    order.sort((x, y) -> Long.compare(totals.get(y)[1] * 1_000_000 + totals.get(y)[0], totals.get(x)[1] * 1_000_000 + totals.get(x)[0]));
+    List<Object> threads = new ArrayList<>();
+    for (int th : order.subList(0, Math.min(maxThreads, order.size()))) {
+      Map<Long, int[]> c = cells.get(th);
+      Map<Long, int[]> best = new HashMap<>();  // bin -> [activity, count]
+      c.forEach((k, n) -> {
+        long b = k >>> 16;
+        int a = (int) (k & 0xffff);
+        int[] cur = best.get(b);
+        if (cur == null || n[0] > cur[1]) best.put(b, new int[]{a, n[0]});
+      });
+      Map<String, Object> bins = new LinkedHashMap<>();  // bin -> [activity index, samples]
+      best.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e -> bins.put(e.getKey().toString(), List.of(e.getValue()[0], e.getValue()[1])));
+      Map<String, Object> t = new LinkedHashMap<>();
+      t.put("tid", threadJavaIds.get(th));
+      t.put("name", threadNames.get(th));
+      t.put("group", Activities.threadGroup(threadNames.get(th)));
+      t.put("samples", totals.get(th)[0]);
+      t.put("now_samples", totals.get(th)[1]);
+      Integer li = latest.get(th);
+      if (li != null) {
+        t.put("now", activity(samples.b[li]));
+        t.put("frame", topFrame(samples.b[li]));
+        t.put("native", samples.c[li] == NATIVE);
+      }
+      t.put("bins", bins);
+      threads.add(t);
+    }
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("since", since);
+    out.put("bin", bin);
+    out.put("bins", nbins);
+    out.put("activities", new ArrayList<>(actIndex.keySet()));
+    out.put("threads", threads);
+    return out;
+  }
+
+  /** The frame to show for "doing what": the one that earned the stack its activity (see {@link Activities#explain}). */
+  private String topFrame(int stack) {
+    if (stack < 0) return null;
+    int i = explain(stack).frame();
+    int[] st = stacks.get(stack);
+    return i >= 0 && i < st.length ? frames.get(st[i]) : null;
   }
 
   /** Weights by stack (frame names, root first; reversed if asked), for one kind: what a diff compares. */

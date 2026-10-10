@@ -20,6 +20,17 @@ class ActivitiesTest {
   }
 
   @Test
+  void explainsWithTheFrameThatEarnedIt() {
+    List<String> st = List.of("java.lang.Thread.run", "sbt.internal.inc.AnalyzingCompiler.compile", "scala.tools.nsc.Global$Run.compileUnits",
+        "scala.tools.nsc.typechecker.Typers$Typer.typedApply", "scala.tools.nsc.typechecker.Infer$Inferencer.isCompatible", "java.util.HashMap.get");
+    Activities.Activity a = Activities.explain(st);
+    assertEquals("scalac: typer", a.label());
+    assertEquals("scala.tools.nsc.typechecker.Infer$Inferencer.isCompatible", st.get(a.frame()), "the innermost frame of the winning rule");
+    List<String> app = List.of("java.lang.Thread.run", "com.example.app.Server.handle", "com.example.app.Codec.decode", "java.lang.String.indexOf");
+    assertEquals("com.example.app.Codec.decode", app.get(Activities.explain(app).frame()));
+  }
+
+  @Test
   void fallsBackToThePackage() {
     assertEquals("com.example.app", of("java.lang.Thread.run", "com.example.app.Server.handle", "java.lang.String.indexOf"));
     // a class and its lambdas are one package

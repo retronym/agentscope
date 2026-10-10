@@ -25,6 +25,7 @@ import java.util.concurrent.Executors;
  * {"id": 5, "op": "summary", "pid": 123, "since": ms, "bins": 300} → {"id": 5, "summary": {...}}   thread lanes, heatmap, GC
  * {"id": 6, "op": "flame", "pid": 123, "t0": ms, "t1": ms, "kind": "cpu", "threads": [ids], "reverse": false} → {"id": 6, "flame": {...}}
  * {"id": 7, "op": "activities", "pid": 123, "since": ms}    → {"id": 7, "activities": [{activity, samples, threads}]}
+ * {"op": "thread_activity", "pid": 123, "since": ms, "bins": 150}  → {"threads": {...}}  per thread: activity per bin, and right now
  * {"id": 8, "op": "minute", "pid": 123, "t0": ms, "t1": ms}  → {"id": 8, "minute": {groups, rows}}   exact, for storage
  * {"id": 9, "op": "stacks", "pid": 123, "ids": [stack ids]}   → {"id": 9, "stacks": {frames, stacks}}  definitions
  * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?}   async-profiler captures; base: a diff
@@ -79,6 +80,8 @@ public final class Main {
         case "record_stop" -> resp.put("recording", recordings.stop(pid(req)));
         case "recordings" -> resp.put("recordings", recordings.list());
         case "activities" -> resp.put("activities", recordings.profile(pid(req)).activities(num(req, "since", 0)));
+        case "thread_activity" -> resp.put("threads", recordings.profile(pid(req)).threadActivity(num(req, "since", 0), (int) num(req, "bins", 150),
+            num(req, "now_ms", 5000), (int) num(req, "max_threads", 40)));
         case "minute" -> resp.put("minute", recordings.profile(pid(req)).minute(num(req, "t0", 0), num(req, "t1", Long.MAX_VALUE)));
         case "stacks" -> {
           List<Integer> ids = new ArrayList<>();

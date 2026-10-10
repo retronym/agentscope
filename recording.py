@@ -5,7 +5,7 @@ been up a few seconds, and the Java helper follows it. A JVM can also be switche
 when Record goes off and when the server exits; pids are remembered on disk so a crash's leftovers are stopped on the
 next start.
 """
-import json, os, queue, re, threading, time, traceback
+import concurrent.futures, json, os, queue, re, threading, time, traceback
 
 import profiles
 
@@ -32,6 +32,7 @@ class Recorder:
         self.work = queue.Queue()
         self.queued = set()  # (op, jvm id) waiting for the worker, so ticks don't pile up duplicates
         self.settings = dict(DEFAULTS)
+        self._ta_cache = {}
         helper.keepalive = lambda: any(r["live"] for r in self.recs.values())
         threading.Thread(target=self._worker, daemon=True).start()
         threading.Thread(target=self._poll, daemon=True).start()
@@ -160,6 +161,28 @@ class Recorder:
                 profiles.store_minute(self.db, self.helper, r["gen"], r["pid"], jid, t)
                 with self.lock:
                     self.recs[jid]["stored_to"] = t + 60
+
+    def thread_activity(self, window=300, bins=150):
+        """Every recorded JVM's threads, what they're doing now and per time bin, for the machine-wide live view.
+        Queried in parallel; cached a couple of seconds since every open page polls it."""
+        key = (window, bins)
+        hit = self._ta_cache.get(key)
+        if hit and time.time() - hit[0] < 2:
+            return hit[1]
+        with self.lock:
+            live = [(jid, r["pid"]) for jid, r in self.recs.items() if r["live"] and r.get("gen") == self.helper.gen]
+        since = int((time.time() - window) * 1000)
+
+        def one(job):
+            jid, pid = job
+            try:
+                return jid, self.helper.call("thread_activity", timeout=10, pid=pid, since=since, bins=bins)["threads"]
+            except Exception as e:
+                return jid, dict(error=str(e))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            out = dict(now=time.time(), since=since / 1000, window=window, jvms={str(jid): r for jid, r in ex.map(one, live)})
+        self._ta_cache[key] = (time.time(), out)
+        return out
 
     def stored_first(self):
         if self.db and time.time() - self.stored["t"] > 60:

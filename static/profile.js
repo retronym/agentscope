@@ -199,7 +199,7 @@ function drawFlame(id) {
   for (const name of p.zoom) { const k = root[2].find(c => c[0] === name); if (!k) { p.zoom = []; root = f.root; break; } root = k; path.push(name); }
   patch(head, `<b>Flame graph</b>
     <span class="seg" title="Callers first (top-down), or where the time is spent first and then who called it (reversed, bottom-up)">${[[false, '↓ top-down'], [true, '↑ reversed']].map(([r, l]) => `<button class="${!!p.reverse === r ? 'on' : ''}" onclick="setProf(${qid(id)}, {reverse: ${r}, zoom: []})">${l}</button>`).join('')}</span>
-    <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${String(id).startsWith('cap') ? (f.diff ? 'difference: red grew, blue shrank, against the chosen capture' : 'capture') : id === 'all' ? esc(ALL_RANGES.find(r => r[0] === p.range)[1]) + ', per minute, every recorded JVM' : p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${qid(id)},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
+    <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${String(id).startsWith('cap') ? (f.diff ? 'difference: red grew, blue shrank, against the chosen capture' : 'capture') : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM' : p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${qid(id)},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
     ${p.zoom.length ? `<a href="#" class="sub" onclick="setProf(${qid(id)},{zoom:[]});return false">↺ reset zoom</a> <span class="sub">${p.zoom.map(z => esc(shortName(z))).join(' › ')}</span>` : ''}`);
   const rows = [];  // [depth, x, w, node]
   const lay = (n, d, x, w) => { rows.push([d, x, w, n]); let cx = x; for (const k of n[2]) { const kw = w * k[1] / n[1]; if (kw >= 0.0008) lay(k, d + 1, cx, kw); cx += kw; } };
@@ -258,7 +258,8 @@ function renderAllFlame() {
   const p = prof.all;
   patch(el, `<div class="profh"><b>Across JVMs</b><span class="sub">session → JVM → activity → frames</span>
       <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf('all', {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
-      <span class="seg">${ALL_RANGES.map(([r, l]) => `<button class="${p.range === r ? 'on' : ''}" onclick="setProf('all', {range:${r}, zoom: []})">${l.replace('last ', '')}</button>`).join('')}</span></div>
+      <span class="seg">${ALL_RANGES.map(([r, l]) => `<button class="${!p.abs && p.range === r ? 'on' : ''}" onclick="act.sel=null;setProf('all', {range:${r}, abs:null, zoom: []})">${l.replace('last ', '')}</button>`).join('')}</span>
+      ${p.abs ? `<span class="sub">selected ${new Date(p.abs[0] * 1000).toLocaleTimeString()}–${new Date(p.abs[1] * 1000).toLocaleTimeString()} <a href="#" onclick="act.sel=null;setProf('all',{abs:null,zoom:[]});return false">✕</a></span>` : ''}</div>
     <div class="profc"><div class="flameh" id="flameh-all"></div><div class="flamewrap"><canvas id="flame-all"></canvas></div></div>`);
   loadAllFlame();
 }
@@ -266,7 +267,9 @@ async function loadAllFlame(force) {
   const p = prof.all;
   if (p.busy || (!force && p.fetched && Date.now() - p.fetched < 30000)) { drawFlame('all'); return; }
   p.busy = true;
-  try { p.flame = await api(`/api/jvms/flame?t0=${Date.now() / 1000 - p.range}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}`); p.error = null; }
+  // a range brushed on the Activity lanes, or the last N; stored per minute, so widen to whole minutes
+  const [t0, t1] = p.abs ? [Math.floor(p.abs[0] / 60) * 60, Math.ceil(p.abs[1] / 60) * 60] : [Date.now() / 1000 - p.range, Date.now() / 1000 + 60];
+  try { p.flame = await api(`/api/jvms/flame?t0=${t0}&t1=${t1}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}`); p.error = null; }
   catch (e) { p.error = String(e.message || e); }
   p.busy = false; p.fetched = Date.now();
   drawFlame('all');
@@ -280,4 +283,4 @@ function activityLine(j, n = 3) {
 
 // Canvases are drawn at their current width: redraw when it changes
 let _resizeT;
-addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' || id.startsWith('cap') ? drawFlame(id) : drawProfile(+id)); }, 100); });
+addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' || id.startsWith('cap') ? drawFlame(id) : drawProfile(+id)); renderActivity(); }, 100); });

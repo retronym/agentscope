@@ -44,6 +44,14 @@ class RecordingsTest {
       List<Map<String, Object>> acts = p.activities(t0);
       assertEquals("agentscope.profiler", acts.getFirst().get("activity"), acts.toString());
 
+      // the live view: the spinner is busy right now, in its own package, with a Java top frame
+      Map<String, Object> ta = p.threadActivity(t0, 150, 5000, 40);
+      Map<String, Object> busiest = ((List<Map<String, Object>>) ta.get("threads")).getFirst();
+      assertEquals("spinner", busiest.get("name"));
+      assertEquals("agentscope.profiler", busiest.get("now"));
+      assertTrue(String.valueOf(busiest.get("frame")).startsWith("agentscope.profiler."), "the frame that earned the activity: " + busiest.get("frame"));
+      assertFalse(((Map<?, ?>) busiest.get("bins")).isEmpty());
+
       // for storage: exact weights per stack, and stack definitions on request
       Map<String, Object> minute = p.minute(t0, Long.MAX_VALUE);
       List<List<Object>> rows = (List<List<Object>>) minute.get("rows");

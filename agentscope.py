@@ -1034,7 +1034,7 @@ def _memsize():
 
 _helper = helper.Helper()
 _captures = None  # set by serve()
-STATIC = ("static/jvm.js", "static/profile.js", "static/captures.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
+STATIC = ("static/jvm.js", "static/profile.js", "static/captures.js", "static/activity.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
@@ -1113,6 +1113,9 @@ def serve(port):
                     r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
                                      kind=q.get("kind", "cpu"), threads=threads, reverse=q.get("reverse") == "1")
                     self._send(200, json.dumps(r["flame"]), "application/json")
+                elif path == "/api/activity":
+                    w = int(q.get("window", 300))
+                    self._send(200, json.dumps(sampler.recorder.thread_activity(w, 150 if w <= 600 else 180)), "application/json")
                 elif path == "/api/captures":
                     self._send(200, json.dumps(_captures.list(int(q["jvm"]) if q.get("jvm") else None)), "application/json")
                 elif path == "/api/capture/flame":
