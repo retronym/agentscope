@@ -56,6 +56,9 @@ public final class Main {
         });
       }
     }
+    // stdin closed: the server is gone. Exit even though JFR's event-stream threads (not daemons) are still running,
+    // or every server restart while recording leaves a helper behind.
+    System.exit(0);
   }
 
   static String handle(String line) {
