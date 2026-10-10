@@ -41,7 +41,7 @@ function renderCaptures(jvmId) {
       <select class="recscope" onchange="capSeconds=+this.value;localStore('capSeconds', this.value)">${[10, 30, 60, 120].map(s => `<option value="${s}" ${s === capSecs() ? 'selected' : ''}>${s} s</option>`).join('')}</select>
       ${running ? `<span class="sub">capturing… ${clock(Math.max(0, running.started + running.seconds - Date.now() / 1000))} left</span>` : ''}</div>
     ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
-    ${p ? `<div class="profc"><div class="flameh" id="flameh-${open}"></div><div class="flamewrap"><canvas id="flame-${open}"></canvas></div></div>` : ''}`);
+    ${p ? `<div class="profc"><div class="fg" id="fg-${open}"></div></div>` : ''}`);
   if (p) drawFlame(open);
 }
 

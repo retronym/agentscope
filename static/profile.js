@@ -61,7 +61,7 @@ function profileSection(j) {
       ${r.stack_depth ? `<span class="sub" title="the depth this recording actually has">depth ${r.stack_depth}${r.stack_depth < S.record.settings.record_depth ? ' (JFR was already running in this JVM)' : ''}</span>` : ''}
       <span class="sub" id="profstat-${j.id}"></span></div>
     <div class="profc"><canvas id="heat-${j.id}"></canvas><canvas id="lanes-${j.id}"></canvas>
-      <div class="flameh" id="flameh-${j.id}"></div><div class="flamewrap"><canvas id="flame-${j.id}"></canvas></div></div>`;
+      <div class="fg" id="fg-${j.id}"></div></div>`;
 }
 const qid = id => typeof id === 'string' ? `'${id}'` : id;
 function setProf(id, patch_) {
@@ -192,52 +192,17 @@ function brush(c, id, w, s, laneAt) {
 // ---------------------------------------------------------------- flame graph (icicle: root on top), click to zoom
 const unit = (kind, v) => kind === 'cpu' || kind === 'native' || kind === 'wall' ? `${v} samples` : kind === 'alloc' ? mb(v) + ' allocated (sampled)' :
   kind === 'live' ? mb(v) + ' live' : kind === 'nativemem' ? mb(v) + ' malloc\'d' : `${(v / 1000).toFixed(1)} s waited`;
+// Flame graphs are static/flame.js; this hands each one its data and a title.
 function drawFlame(id) {
-  const p = prof[id], f = p.flame, head = document.getElementById(`flameh-${id}`);
-  if (!f || !head) return;
-  let root = f.root;
-  const path = [root[0]];
-  for (const name of p.zoom) { const k = root[2].find(c => c[0] === name); if (!k) { p.zoom = []; root = f.root; break; } root = k; path.push(name); }
-  patch(head, `<b>Flame graph</b>
-    <span class="seg" title="Callers first (top-down), or where the time is spent first and then who called it (reversed, bottom-up)">${[[false, '↓ top-down'], [true, '↑ reversed']].map(([r, l]) => `<button class="${!!p.reverse === r ? 'on' : ''}" onclick="setProf(${qid(id)}, {reverse: ${r}, zoom: []})">${l}</button>`).join('')}</span>
-    <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${String(id).startsWith('cap') ? (f.diff ? 'difference: red grew, blue shrank, against the chosen capture' : 'capture') : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM' : p.sel ? 'selected range' : 'whole window'}${p.thread ? ' · thread ' + esc(p.thread.name) + ` <a href="#" onclick="setProf(${qid(id)},{thread:null,zoom:[]});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>
-    ${p.zoom.length ? `<a href="#" class="sub" onclick="setProf(${qid(id)},{zoom:[]});return false">↺ reset zoom</a> <span class="sub">${p.zoom.map(z => esc(shortName(z))).join(' › ')}</span>` : ''}`);
-  const rows = [];  // [depth, x, w, node]
-  const lay = (n, d, x, w) => { rows.push([d, x, w, n]); let cx = x; for (const k of n[2]) { const kw = w * k[1] / n[1]; if (kw >= 0.0008) lay(k, d + 1, cx, kw); cx += kw; } };
-  if (root[1]) lay(root, 0, 0, 1);
-  const depth = rows.reduce((a, r) => Math.max(a, r[0]), 0) + 1;
-  const r = canvasFor(id, 'flame', Math.max(40, depth * FLAME_ROW + 2)); if (!r) return;
-  const [c, g, w] = r, dark = matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
-  if (!root[1]) { g.fillStyle = css('--muted'); g.fillText('no samples in this range', 4, 14); return; }
-  for (const [d, x, fw, n] of rows) {
-    const px = x * w, pw = fw * w, y = d * FLAME_ROW;
-    if (pw < 0.5) continue;
-    g.fillStyle = f.diff ? diffColor(n, f, dark) : n[3] || d === 0 ? (dark ? '#8a877e' : '#d9d6cb') : frameColor(n[0], dark);  // n[3]: a label level (session, JVM, activity)
-    g.fillRect(px, y, Math.max(0.5, pw - 0.5), FLAME_ROW - 1);
-    if (pw > 30) { g.fillStyle = '#1b1b1a'; g.fillText(fit(g, d === 0 ? (p.zoom.length ? shortName(n[0]) : 'all') : n[3] ? n[0] : shortName(n[0]), pw - 6), px + 3, y + FLAME_ROW / 2); }
-  }
-  const hit = e => { const b = c.getBoundingClientRect(), x = (e.clientX - b.left) / w, d = Math.floor((e.clientY - b.top) / FLAME_ROW); return rows.find(r => r[0] === d && x >= r[1] && x < r[1] + r[2]); };
-  c.onmousemove = e => {
-    const h = hit(e); if (!h) return hideTip();
-    const n = h[3], share = v => (v / Math.max(1, f.total) * 100).toFixed(1) + '%';
-    tip(e, `<div class="tt" style="word-break:break-all">${esc(n[0])}</div><div class="tm">${esc(unit(p.kind, n[1]))} · ${share(n[1])} of all</div>` +
-      (f.diff ? `<div class="tm">before: ${esc(unit(p.kind, n[4] || 0))} · ${((n[4] || 0) / Math.max(1, f.before_total) * 100).toFixed(1)}% of all</div>` : ''));
-  };
-  c.onmouseleave = hideTip;
-  c.onclick = e => {
-    const h = hit(e); if (!h || h[0] === 0) return;
-    // the zoom path is the chain of names from the current root down to the clicked frame; parents precede children in rows
-    const names = [], chain = [h]; let d = h[0];
-    for (let k = rows.indexOf(h) - 1; k >= 0 && d > 1; k--) if (rows[k][0] === d - 1 && rows[k][1] <= h[1] + 1e-9 && rows[k][1] + rows[k][2] >= h[1] + h[2] - 1e-9) { chain.unshift(rows[k]); d--; }
-    for (const x of chain) names.push(x[3][0]);
-    p.zoom = p.zoom.concat(names); drawFlame(id);
-  };
-}
-// Differential: the share of all samples a frame had after, against before. Red grew, blue shrank, grey about the same.
-function diffColor(n, f, dark) {
-  const a = n[1] / Math.max(1, f.total), b = (n[4] || 0) / Math.max(1, f.before_total), r = (a - b) / Math.max(a, b, 1e-9);
-  const l = (dark ? 62 : 82) - 28 * Math.min(1, Math.abs(r));
-  return Math.abs(r) < 0.05 ? (dark ? '#77756f' : '#d9d6cb') : r > 0 ? `hsl(4, 75%, ${l}%)` : `hsl(215, 70%, ${l}%)`;
+  const p = prof[id], el = document.getElementById(`fg-${id}`);
+  if (!p || !el) return;
+  if (!p.flame) { if (!el.dataset.fg) el.innerHTML = `<div class="sub">${p.error ? '⚠ ' + esc(p.error) : 'loading…'}</div>`; return; }
+  const f = p.flame;
+  const what = String(id).startsWith('cap') ? (f.diff ? 'difference against the chosen capture: red grew, blue shrank' : 'capture')
+    : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM'
+    : p.sel ? 'selected range' : 'whole window';
+  const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · thread ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>`;
+  Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r }) });
 }
 const shortName = n => n.replace(/^([a-z_$][\w$]*\.)+(?=[A-Z_$][\w$]*[.$])/, m => m.split('.').filter(Boolean).map(x => x[0]).join('.') + '.');
 function frameColor(name, dark) {
@@ -261,7 +226,7 @@ function renderAllFlame() {
       <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf('all', {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
       <span class="seg">${ALL_RANGES.map(([r, l]) => `<button class="${!p.abs && p.range === r ? 'on' : ''}" onclick="act.sel=null;setProf('all', {range:${r}, abs:null, zoom: []})">${l.replace('last ', '')}</button>`).join('')}</span>
       ${p.abs ? `<span class="sub">selected ${new Date(p.abs[0] * 1000).toLocaleTimeString()}–${new Date(p.abs[1] * 1000).toLocaleTimeString()} <a href="#" onclick="act.sel=null;setProf('all',{abs:null,zoom:[]});return false">✕</a></span>` : ''}</div>
-    <div class="profc"><div class="flameh" id="flameh-all"></div><div class="flamewrap"><canvas id="flame-all"></canvas></div></div>`);
+    <div class="profc"><div class="fg" id="fg-all"></div></div>`);
   loadAllFlame();
 }
 async function loadAllFlame(force) {

@@ -168,7 +168,12 @@ function renderJvmBox() {
   loadCaptures(j.id);
 }
 // Esc closes the full-size view before anything else (the side panel's own Esc handler runs later, in bubbling order)
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && boxId != null) { e.stopImmediatePropagation(); closeJvmBox(); } }, true);
+// …unless a flame graph inside it has something of its own to close (its search, menu or help)
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || boxId == null) return;
+  if (e.target.closest?.('.fg') || document.querySelector('.fg-menu')) return;
+  e.stopImmediatePropagation(); closeJvmBox();
+}, true);
 // One line per JVM on a session card; only JVMs worth mentioning.
 function jvmLine(s) {
   const js = jvmSorted((S.jvms || []).filter(j => j.sid === s.sid)).filter(j => j.flags.length || j.cpu >= 5 || j.heap_used >= 200e6).slice(0, 2);

@@ -1034,7 +1034,7 @@ def _memsize():
 
 _helper = helper.Helper()
 _captures = None  # set by serve()
-STATIC = ("static/jvm.js", "static/profile.js", "static/captures.js", "static/activity.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
+STATIC = ("static/jvm.js", "static/profile.js", "static/flame.js", "static/captures.js", "static/activity.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
