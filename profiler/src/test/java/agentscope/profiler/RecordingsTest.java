@@ -16,8 +16,9 @@ class RecordingsTest {
     try (FixtureProcess f = new FixtureProcess(Path.of(System.getProperty("java.home")))) {
       Recordings recs = new Recordings();
       long t0 = System.currentTimeMillis();
-      Map<String, Object> started = recs.start(f.pid());
+      Map<String, Object> started = recs.start(f.pid(), 512);
       assertEquals(false, started.get("adopted"));
+      assertEquals(512, started.get("stack_depth"), "a fresh JVM takes the deeper stacks");
       Thread.sleep(5000);  // JFR flushes the repository about once a second; give it a few
 
       Profile p = recs.profile(f.pid());

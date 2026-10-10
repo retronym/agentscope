@@ -75,7 +75,7 @@ public final class Main {
           long interval = req.get("interval_ms") instanceof Number n ? n.longValue() : 1000;
           resp.put("dump", Jcmd.threads(pid(req), interval));
         }
-        case "record_start" -> resp.put("recording", recordings.start(pid(req)));
+        case "record_start" -> resp.put("recording", recordings.start(pid(req), (int) num(req, "stack_depth", 0)));
         case "record_stop" -> resp.put("recording", recordings.stop(pid(req)));
         case "recordings" -> resp.put("recordings", recordings.list());
         case "activities" -> resp.put("activities", recordings.profile(pid(req)).activities(num(req, "since", 0)));

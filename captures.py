@@ -45,7 +45,7 @@ class Captures:
         with db() as c:  # a capture can't survive a restart of the server that was running asprof for it
             c.execute("UPDATE capture SET status = 'failed', error = 'interrupted' WHERE status = 'running'")
 
-    def start(self, jvm_id, mode, seconds):
+    def start(self, jvm_id, mode, seconds, stack_depth=4096):
         if mode not in MODES:
             raise ValueError(f"mode: one of {list(MODES)}")
         seconds = max(5, min(int(seconds), 300))
@@ -62,13 +62,13 @@ class Captures:
             cid = c.execute("INSERT INTO capture (jvm_id, pid, mode, seconds, started, status) VALUES (?,?,?,?,?, 'running')",
                             (jvm_id, j["pid"], mode, seconds, time.time())).lastrowid
         path = os.path.join(self.folder, f"capture-{cid}-{j['pid']}-{mode}.jfr")
-        threading.Thread(target=self._run, args=(cid, tool, j["pid"], mode, seconds, path), daemon=True).start()
+        threading.Thread(target=self._run, args=(cid, tool, j["pid"], mode, seconds, path, stack_depth), daemon=True).start()
         return cid
 
-    def _run(self, cid, tool, pid, mode, seconds, path):
+    def _run(self, cid, tool, pid, mode, seconds, path, stack_depth):
         status, error, kinds, size = "done", None, None, None
         try:
-            r = subprocess.run([tool, *MODES[mode][1], "-d", str(seconds), "-o", "jfr", "-f", path, str(pid)],
+            r = subprocess.run([tool, *MODES[mode][1], "-j", str(stack_depth), "-d", str(seconds), "-o", "jfr", "-f", path, str(pid)],
                                capture_output=True, text=True, timeout=seconds + 60)
             if r.returncode != 0 or not os.path.exists(path):
                 raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"asprof exited {r.returncode}")

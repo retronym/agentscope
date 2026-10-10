@@ -132,7 +132,7 @@ function renderJvms() {
 // ---------------------------------------------------------------- full-size view of one JVM (#jvm=<id>), over everything
 let boxId = null;
 function openJvmBox(id) { boxId = id; setHash({ jvm: id }); renderJvmBox(); loadJvmHist(id); }
-function closeJvmBox() { boxId = null; setHash({ jvm: null }); renderJvmBox(); }
+function closeJvmBox() { boxId = null; setHash({ jvm: null, cap: null }); renderJvmBox(); }
 function applyJvmHash(h) { const id = h.jvm ? +h.jvm : null; if (id !== boxId) id ? openJvmBox(id) : closeJvmBox(); }
 function renderJvmBox() {
   let box = document.getElementById('jvmbox');

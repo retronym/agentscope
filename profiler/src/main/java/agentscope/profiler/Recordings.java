@@ -21,8 +21,9 @@ import java.util.regex.Pattern;
 public final class Recordings {
   static final String NAME = "agentscope";
   private static final Pattern REPO = Pattern.compile("Repository path: (.+)");
+  private static final Pattern DEPTH = Pattern.compile("Stack depth: (\\d+)");
 
-  private record Rec(long pid, Path repo, EventStream stream, Profile profile, long since, boolean[] live) {}
+  private record Rec(long pid, Path repo, EventStream stream, Profile profile, long since, boolean[] live, int stackDepth) {}
 
   private final Map<Long, Rec> recs = new ConcurrentHashMap<>();
   private final Path settings;
@@ -36,18 +37,31 @@ public final class Recordings {
     }
   }
 
-  /** Starts (or, if one is already running from an earlier helper, adopts) the recording, and follows it. */
   public synchronized Map<String, Object> start(long pid) throws Exception {
+    return start(pid, 0);
+  }
+
+  /**
+   * Starts (or, if one is already running from an earlier helper, adopts) the recording, and follows it.
+   * {@code stackDepth} > 0 asks for deeper stacks than JFR's 64; JFR only accepts that before it has initialized in
+   * the target, so the depth actually in effect is reported back.
+   */
+  public synchronized Map<String, Object> start(long pid, int stackDepth) throws Exception {
     Rec r = recs.get(pid);
     if (r != null && r.live()[0]) return describe(r);
+    // before anything else: any JFR command (even JFR.check) initializes JFR, after which the depth can't change
+    if (stackDepth > 0) Jcmd.execute(pid, "JFR.configure stackdepth=" + stackDepth);
     String check = Jcmd.execute(pid, "JFR.check name=" + NAME);
     boolean adopted = check.contains("name=" + NAME) || check.contains("\"" + NAME + "\"");
     if (!adopted) {
       String out = Jcmd.execute(pid, "JFR.start name=" + NAME + " settings=" + settings + " disk=true maxage=30m maxsize=250m");
       if (!out.contains("Started recording")) throw new IllegalStateException(out.strip());
     }
-    Matcher m = REPO.matcher(Jcmd.execute(pid, "JFR.configure"));
+    String config = Jcmd.execute(pid, "JFR.configure");
+    Matcher m = REPO.matcher(config);
     if (!m.find()) throw new IllegalStateException("no JFR repository for pid " + pid);
+    Matcher dm = DEPTH.matcher(config);
+    int depth = dm.find() ? Integer.parseInt(dm.group(1)) : 64;
     Path repo = Path.of(m.group(1).strip());
     Profile profile = r != null ? r.profile() : new Profile(Runtime.getRuntime().availableProcessors());
     EventStream es = EventStream.openRepository(repo);
@@ -56,7 +70,7 @@ public final class Recordings {
     boolean[] live = {true};
     es.onClose(() -> live[0] = false);
     es.startAsync();
-    Rec rec = new Rec(pid, repo, es, profile, System.currentTimeMillis(), live);
+    Rec rec = new Rec(pid, repo, es, profile, System.currentTimeMillis(), live, depth);
     recs.put(pid, rec);
     Map<String, Object> d = describe(rec);
     d.put("adopted", adopted);
@@ -100,6 +114,7 @@ public final class Recordings {
     m.put("repo", r.repo().toString());
     m.put("since", r.since());
     m.put("live", r.live()[0]);
+    m.put("stack_depth", r.stackDepth());
     m.putAll(r.profile().stats());
     return m;
   }

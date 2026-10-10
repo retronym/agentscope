@@ -27,6 +27,12 @@ async function post(url, body) {
 }
 async function setRecord(on, scope) { S.record = await post('/api/record', { on, scope }); renderRecord(); refresh(); }
 function toggleRecord() { setRecord(!recState().on, recState().scope); }
+function depthSelect(key, options, title) {
+  const v = S.record?.settings?.[key];
+  if (DEMO || !v) return '';
+  return `<select class="recscope" title="${esc(title)}" onchange="setSetting('${key}', +this.value)">${options.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o} frames</option>`).join('')}</select>`;
+}
+async function setSetting(key, value) { S.record.settings = await post('/api/settings', { [key]: value }); refresh(); }
 async function setJvmRecord(id, on) { S.record = await post('/api/jvm/record', { id, on }); refresh(); }
 
 // The dot on a JVM row
@@ -51,9 +57,11 @@ function profileSection(j) {
   return `<div class="profh"><b>Profile</b>${recording ? '<span class="recdot"></span>' : '<span class="sub">stopped</span>'}${toggle}
       <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf(${j.id}, {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
       <span class="seg">${[[300, '5 min'], [1800, '30 min']].map(([w, l]) => `<button class="${p.window === w ? 'on' : ''}" onclick="setProf(${j.id}, {window:${w}, sel:null})">${l}</button>`).join('')}</span>
+      ${depthSelect('record_depth', [64, 128, 256, 512, 1024, 2048], 'Stack depth for new recordings. JFR takes it only in a JVM where JFR hasn\'t started yet; deeper stacks cost a little more per sample.')}
+      ${r.stack_depth ? `<span class="sub" title="the depth this recording actually has">depth ${r.stack_depth}${r.stack_depth < S.record.settings.record_depth ? ' (JFR was already running in this JVM)' : ''}</span>` : ''}
       <span class="sub" id="profstat-${j.id}"></span></div>
     <div class="profc"><canvas id="heat-${j.id}"></canvas><canvas id="lanes-${j.id}"></canvas>
-      <div class="flameh" id="flameh-${j.id}"></div><canvas id="flame-${j.id}"></canvas></div>`;
+      <div class="flameh" id="flameh-${j.id}"></div><div class="flamewrap"><canvas id="flame-${j.id}"></canvas></div></div>`;
 }
 const qid = id => typeof id === 'string' ? `'${id}'` : id;
 function setProf(id, patch_) {
@@ -251,7 +259,7 @@ function renderAllFlame() {
   patch(el, `<div class="profh"><b>Across JVMs</b><span class="sub">session → JVM → activity → frames</span>
       <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf('all', {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
       <span class="seg">${ALL_RANGES.map(([r, l]) => `<button class="${p.range === r ? 'on' : ''}" onclick="setProf('all', {range:${r}, zoom: []})">${l.replace('last ', '')}</button>`).join('')}</span></div>
-    <div class="profc"><div class="flameh" id="flameh-all"></div><canvas id="flame-all"></canvas></div>`);
+    <div class="profc"><div class="flameh" id="flameh-all"></div><div class="flamewrap"><canvas id="flame-all"></canvas></div></div>`);
   loadAllFlame();
 }
 async function loadAllFlame(force) {

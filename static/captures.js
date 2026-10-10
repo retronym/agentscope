@@ -10,7 +10,12 @@ const capSecs = () => capSeconds ??= +(localStore('capSeconds') || 30);
 async function loadCaptures(jvmId, force) {
   const c = capLists[jvmId];
   if (!force && c && Date.now() - c.t < (c.rows.some(r => r.status === 'running') ? 2000 : 15000)) return c.rows;
+  const before = new Set((c?.rows || []).filter(r => r.status === 'running').map(r => r.id));
   try { capLists[jvmId] = { t: Date.now(), rows: await api(`/api/captures?jvm=${jvmId}`) }; } catch (e) { capLists[jvmId] = { t: Date.now(), rows: [] }; }
+  // a capture that finishes while you're looking opens by itself; #cap=<id> opens one from a link
+  const want = +hashState().cap || capLists[jvmId].rows.find(r => before.has(r.id) && r.status === 'done')?.id;
+  const r = want && capLists[jvmId].rows.find(r => r.id === want && r.status === 'done');
+  if (r && !prof['cap' + r.id]?.shown) showCapture(jvmId, r.id, Object.keys(r.kinds || {})[0] || 'cpu');
   if (boxId === jvmId) renderCaptures(jvmId);
   return capLists[jvmId].rows;
 }
@@ -32,10 +37,11 @@ function renderCaptures(jvmId) {
   const p = open && prof[open];
   patch(el, `<div class="profh"><b>Captures</b><span class="sub">async-profiler, one JVM, a bounded window</span>
       ${CAP_MODES.map(([m, l]) => `<button class="btn-link" ${running ? 'disabled' : ''} onclick="startCapture(${jvmId}, '${m}')">● ${l}</button>`).join('')}
+      ${depthSelect('capture_depth', [256, 1024, 2048, 4096, 8192, 16384], 'Maximum Java stack depth async-profiler records (-j)')}
       <select class="recscope" onchange="capSeconds=+this.value;localStore('capSeconds', this.value)">${[10, 30, 60, 120].map(s => `<option value="${s}" ${s === capSecs() ? 'selected' : ''}>${s} s</option>`).join('')}</select>
       ${running ? `<span class="sub">capturing… ${clock(Math.max(0, running.started + running.seconds - Date.now() / 1000))} left</span>` : ''}</div>
     ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
-    ${p ? `<div class="profc"><div class="flameh" id="flameh-${open}"></div><canvas id="flame-${open}"></canvas></div>` : ''}`);
+    ${p ? `<div class="profc"><div class="flameh" id="flameh-${open}"></div><div class="flamewrap"><canvas id="flame-${open}"></canvas></div></div>` : ''}`);
   if (p) drawFlame(open);
 }
 
@@ -52,6 +58,7 @@ function capRow(r, rows, p) {
 
 function showCapture(jvmId, cid, kind) {
   for (const k of Object.keys(prof)) if (k.startsWith('cap')) prof[k].shown = false;
+  setHash({ cap: cid });
   const key = 'cap' + cid;
   prof[key] = Object.assign(prof[key] || { zoom: [] }, { jvm: jvmId, cap: cid, kind, shown: true, zoom: [], load: () => loadCapFlame(key) });
   renderCaptures(jvmId);

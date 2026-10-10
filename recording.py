@@ -11,6 +11,9 @@ import profiles
 
 MIN_UPTIME = 5  # seconds before a new JVM is worth attaching to
 MIN_JDK = 14  # live streaming from a repository needs JDK 14+ on the recording side
+# Stack depth: JFR's default is 64, too shallow for a compiler's recursion; async-profiler's is 2048.
+DEFAULTS = dict(record_depth=512, capture_depth=4096)
+DEPTHS = dict(record_depth=(64, 2048), capture_depth=(256, 16384))
 
 
 def jdk_major(version):
@@ -28,6 +31,7 @@ class Recorder:
         self.recs = {}  # jvm id -> dict(pid, since, live, error, gen)
         self.work = queue.Queue()
         self.queued = set()  # (op, jvm id) waiting for the worker, so ticks don't pile up duplicates
+        self.settings = dict(DEFAULTS)
         helper.keepalive = lambda: any(r["live"] for r in self.recs.values())
         threading.Thread(target=self._worker, daemon=True).start()
         threading.Thread(target=self._poll, daemon=True).start()
@@ -46,6 +50,15 @@ class Recorder:
             if not on:
                 self.manual.clear()
         self.reconcile()
+
+    def set_settings(self, **kv):
+        with self.lock:
+            for k, v in kv.items():
+                if k in DEPTHS and v is not None:
+                    lo, hi = DEPTHS[k]
+                    self.settings[k] = max(lo, min(int(v), hi))
+        self._save()
+        return dict(self.settings)
 
     def set_jvm(self, jvm_id, on):
         with self.lock:
@@ -92,10 +105,10 @@ class Recorder:
             op, jid, pid = self.work.get()
             try:
                 if op == "start":
-                    rec = self.helper.call("record_start", timeout=60, pid=pid)["recording"]
+                    rec = self.helper.call("record_start", timeout=60, pid=pid, stack_depth=self.settings["record_depth"])["recording"]
                     with self.lock:
                         self.recs[jid] = dict(pid=pid, since=self.recs.get(jid, {}).get("since") or rec["since"] / 1000, live=True,
-                                              error=None, gen=self.helper.gen, adopted=rec.get("adopted"))
+                                              error=None, gen=self.helper.gen, adopted=rec.get("adopted"), stack_depth=rec.get("stack_depth"))
                 else:
                     self.helper.call("record_stop", timeout=60, pid=pid)
                     with self.lock:
@@ -173,7 +186,8 @@ class Recorder:
         try:
             pids = sorted({r["pid"] for r in self.recs.values() if r["live"]})
             with open(self.state_file, "w") as f:
-                json.dump(dict(pids=pids, on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items()}), f)
+                json.dump(dict(pids=pids, on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items()},
+                               settings=self.settings), f)
         except OSError:
             pass
 
@@ -184,6 +198,7 @@ class Recorder:
             return
         self.on, self.scope, self.since = bool(saved.get("on")), saved.get("scope") or "agents", saved.get("since")
         self.manual = {int(k): v for k, v in (saved.get("manual") or {}).items()}
+        self.settings.update({k: v for k, v in (saved.get("settings") or {}).items() if k in DEFAULTS})
         if self.on or any(self.manual.values()):
             return  # recording carries on: reconcile adopts the running 'agentscope' recordings instead of restarting them
         for pid in saved.get("pids", []):
@@ -198,8 +213,9 @@ class Recorder:
     def state(self, now):
         with self.lock:
             return dict(on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items()},
-                        jvms={str(k): dict(since=r.get("since"), live=r["live"], error=r.get("error"), activities=r.get("activities") if r["live"] else None)
-                              for k, r in self.recs.items()}, stored_since=self.stored["first"])
+                        jvms={str(k): dict(since=r.get("since"), live=r["live"], error=r.get("error"), activities=r.get("activities") if r["live"] else None,
+                                           stack_depth=r.get("stack_depth")) for k, r in self.recs.items()},
+                        stored_since=self.stored["first"], settings=dict(self.settings))
 
     def pid_of(self, jvm_id):
         with self.lock:

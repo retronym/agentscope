@@ -1157,8 +1157,11 @@ def serve(port):
                     sampler.recorder.set(bool(body.get("on")), body.get("scope"))
                     self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")
                 elif self.path == "/api/jvm/capture":
-                    cid = _captures.start(int(body.get("id", 0)), str(body.get("mode", "cpu")), int(body.get("seconds", 30)))
+                    cid = _captures.start(int(body.get("id", 0)), str(body.get("mode", "cpu")), int(body.get("seconds", 30)),
+                                          sampler.recorder.settings["capture_depth"])
                     self._send(200, json.dumps(dict(id=cid)), "application/json")
+                elif self.path == "/api/settings":
+                    self._send(200, json.dumps(sampler.recorder.set_settings(**{k: body.get(k) for k in recording.DEFAULTS})), "application/json")
                 elif self.path == "/api/jvm/record":
                     sampler.recorder.set_jvm(int(body.get("id", 0)), bool(body.get("on")))
                     self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")

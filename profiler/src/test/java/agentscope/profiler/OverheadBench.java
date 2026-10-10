@@ -36,7 +36,7 @@ public final class OverheadBench {
       List<double[]> off = new ArrayList<>(), on = new ArrayList<>();
       for (int i = 0; i < pairs; i++) {
         off.add(measure(done, cpu, window));
-        recs.start(p.pid());
+        recs.start(p.pid(), 512);  // agentscope's default depth (JFR's own is 64)
         Thread.sleep(2000);  // JFR's own start-up (first recording in this JVM) is not steady state
         on.add(measure(done, cpu, window));
         recs.stop(p.pid());
