@@ -7,6 +7,8 @@ import itertools, json, os, shutil, subprocess, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 JAR = os.path.join(HERE, "profiler", "target", "agentscope-profiler.jar")
 IDLE_EXIT = 300  # seconds without a request before the helper JVM is stopped
+# The helper holds every recorded JVM's last 30 minutes and parses their JFR streams: give it room, and C2.
+HEAP = os.environ.get("AGENTSCOPE_HELPER_HEAP", "1g")
 
 
 def java():
@@ -37,7 +39,7 @@ class Helper:
 
     def _start(self):
         self.gen += 1
-        self.proc = subprocess.Popen([java(), "-Xmx128m", "-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1", "-jar", self.jar],
+        self.proc = subprocess.Popen([java(), f"-Xmx{HEAP}", "-jar", self.jar],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
         threading.Thread(target=self._reap, args=(self.proc,), daemon=True).start()

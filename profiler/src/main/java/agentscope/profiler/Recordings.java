@@ -65,7 +65,11 @@ public final class Recordings {
     Path repo = Path.of(m.group(1).strip());
     Profile profile = r != null ? r.profile() : new Profile(Runtime.getRuntime().availableProcessors());
     EventStream es = EventStream.openRepository(repo);
-    es.setStartTime(Instant.now().minusSeconds(adopted ? 1800 : 5));
+    // Adopting (after a restart of ours) replays a little history, not the whole 30 minutes: with several JVMs
+    // recording, replaying all of them at once swamped the helper.
+    es.setStartTime(Instant.now().minusSeconds(adopted ? 300 : 5));
+    // Unordered: samples land in time bins regardless of order, and ordering makes the stream buffer and sort each segment.
+    es.setOrdered(false);
     es.onEvent(profile::accept);
     boolean[] live = {true};
     es.onClose(() -> live[0] = false);
