@@ -54,3 +54,47 @@ for f in static/*.js; do node -e "new Function(require('fs').readFileSync('$f','
 python3 -m py_compile agentscope.py jvm.py helper.py recording.py profiles.py captures.py demo/export.py demo/record_fixture.py demo/screenshots.py
 echo "ok"
 """
+
+[tasks.install-agent]
+description = "Run the dashboard as a launchd agent (starts at login, restarts if it dies) so load history is always recorded. Logs to ~/Library/Logs/agentscope.log"
+run = """
+set -euo pipefail
+label=com.retronym.agentscope
+plist="$HOME/Library/LaunchAgents/$label.plist"
+python=$(command -v python3)
+esc() { sed -e 's/&/\\&amp;/g' -e 's/</\\&lt;/g' -e 's/>/\\&gt;/g' <<<"$1"; }
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+# launchd starts agents with a bare PATH: bake in this shell's, so gh, java, ps and lsof resolve as they do here
+cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key><array><string>$(esc "$python")</string><string>-u</string><string>$(esc "$PWD/agentscope.py")</string></array>
+  <key>WorkingDirectory</key><string>$(esc "$PWD")</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>$(esc "$PATH")</string>
+    $([ -n "${JAVA_HOME:-}" ] && echo "<key>JAVA_HOME</key><string>$(esc "$JAVA_HOME")</string>")
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>$(esc "$HOME/Library/Logs/agentscope.log")</string>
+  <key>StandardErrorPath</key><string>$(esc "$HOME/Library/Logs/agentscope.log")</string>
+</dict></plist>
+PLIST
+plutil -lint -s "$plist"
+launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$plist"
+echo "installed $plist; http://localhost:8377, logs in ~/Library/Logs/agentscope.log"
+"""
+
+[tasks.uninstall-agent]
+description = "Stop and remove the launchd agent"
+run = """
+label=com.retronym.agentscope
+launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/$label.plist"
+echo "removed $label"
+"""

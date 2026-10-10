@@ -134,7 +134,7 @@ git clone https://github.com/retronym/agentscope && cd agentscope
 python3 agentscope.py        # or: mise run serve
 ```
 
-Then open http://localhost:8377. To try changes without touching your history, run a second copy on a scratch database: `python3 agentscope.py --port 8378 --db dist/dev.db`. Load history accumulates while the server runs, so leave it running.
+Then open http://localhost:8377. To try changes without touching your history, run a second copy on a scratch database: `python3 agentscope.py --port 8378 --db dist/dev.db`. Load history accumulates while the server runs, so leave it running: `mise run install-agent` makes it a launchd agent that starts at login and restarts if it dies, logging to `~/Library/Logs/agentscope.log` (`mise run uninstall-agent` removes it). It captures the installing shell's `PATH` and `JAVA_HOME`, so rerun it if `gh` or the JDK move.
 
 **Several Claude accounts?** If you run `claude` with different `CLAUDE_CONFIG_DIR`s (e.g. `alias claude-work='env CLAUDE_CONFIG_DIR=$HOME/.claude-work claude'`), agentscope reads `~/.claude`, `$CLAUDE_CONFIG_DIR` and every `~/.claude-*` directory that holds sessions, and tags each session with the one it came from. To choose explicitly, pass `--claude-dir` once per directory, or set `AGENTSCOPE_CLAUDE_DIRS` (colon-separated). The startup line lists the directories in use.
 
@@ -167,7 +167,6 @@ Before writing, it checks every string against a denylist built from the real sn
 - **Review requests:** PRs where your review is requested, not just ones you authored.
 - **Dismissing loose ends** you've dealt with, so the lists shrink.
 - **Linux support:** `ps`/`lsof` differences and the app's session paths.
-- **A launchd agent** so load history is always being recorded.
 
 ## License
 
