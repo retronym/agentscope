@@ -1101,10 +1101,9 @@ addEventListener('hashchange', applyHash);
 // flame graph loading, a section growing a row. The browser's own scroll anchoring gives up because patch() replaces
 // the nodes it anchors to, so this anchors to keyed elements (ids, session cards, JVM rows) and finds them again.
 const Anchor = (() => {
-  let chain = null, adjusting = false, pending = false;
+  let chain = null;
   const keyOf = e => e.id ? '#' + CSS.escape(e.id) : e.dataset.sid ? `[data-sid="${CSS.escape(e.dataset.sid)}"]` : e.dataset.jvm ? `[data-jvm="${e.dataset.jvm}"]` : null;
   function capture() {
-    if (adjusting) return;
     chain = null;
     if (scrollY < 2) return;  // at the very top: stay there
     // what you're looking at: a third of the way down the visible area, not the sliver just under the header
@@ -1124,12 +1123,13 @@ const Anchor = (() => {
       const e = document.querySelector(k);
       if (!e || !e.getClientRects().length) continue;
       const d = e.getBoundingClientRect().top - top;
-      if (Math.abs(d) >= 1) { adjusting = true; scrollBy(0, d); requestAnimationFrame(() => { adjusting = false; }); }
+      if (Math.abs(d) >= 1) scrollBy(0, d);  // its scroll event captures again: the same chain, back in place
       return;
     }
   }
-  addEventListener('scroll', () => { if (!pending && !adjusting) { pending = true; requestAnimationFrame(() => { pending = false; capture(); }); } }, { passive: true });
-  addEventListener('resize', () => requestAnimationFrame(capture));
+  // no requestAnimationFrame here: it doesn't run in a background tab, and the refresh does
+  addEventListener('scroll', capture, { passive: true });
+  addEventListener('resize', capture);
   new ResizeObserver(restore).observe(document.querySelector('main'));
   return { capture, restore };
 })();
