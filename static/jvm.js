@@ -149,9 +149,10 @@ function renderJvmBox() {
     box = document.createElement('div');
     box.id = 'jvmbox';
     box.className = 'jbox';
-    box.innerHTML = '<div class="jbox-panel"><button class="close" title="close (Esc)" onclick="closeJvmBox()">✕</button><div class="jbox-body"><div class="jbox-main"></div><div class="jbox-prof"></div><div class="jbox-cap"></div><div class="jbox-detail"></div></div></div>';
+    box.innerHTML = '<div class="jbox-panel"><button class="close" title="close (Esc)" onclick="closeJvmBox()">✕</button><div class="jbox-body"><div class="jbox-main"></div><div class="jbox-prof fold" id="jbox-prof"></div><div class="jbox-cap fold" id="jbox-cap"></div><div class="jbox-detail fold" id="jbox-detail"></div></div></div>';
     box.onclick = e => { if (e.target === box) closeJvmBox(); };
     document.body.appendChild(box);
+    applyFolds(box);
   }
   const j = boxId != null && (S?.jvms || []).find(j => j.id === boxId);
   box.classList.toggle('open', boxId != null);
@@ -169,8 +170,8 @@ function renderJvmBox() {
       ${activityLine(j) ? `<div class="jact" style="margin:-6px 0 12px">doing: ${activityLine(j, 4)}</div>` : ''}</div>`);
   // three regions, patched separately so the profile's canvases survive the 5-second refresh
   patch(box.querySelector('.jbox-prof'), profileSection(j));
-  patch(box.querySelector('.jbox-detail'), jvmDetail(j, true));
-  loadProfile(j.id);
+  patch(box.querySelector('.jbox-detail'), `<div class="profh"><b>Details</b><span class="sub">counters, the last 3 hours, snapshots</span></div><div>${jvmDetail(j, true)}</div>`);
+  if (!folded('jbox-prof')) loadProfile(j.id);
   renderCaptures(j.id);
   loadCaptures(j.id);
 }

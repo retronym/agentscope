@@ -15,7 +15,7 @@ function actColor(name) {
 }
 
 async function loadActivity(force) {
-  if (act.busy || (!force && Date.now() - act.fetched < 4000)) return;
+  if (act.busy || (!force && Date.now() - act.fetched < 4000) || folded('jvmactivity')) return;
   act.busy = true;
   try { act.data = await api(`/api/activity?window=${act.window}`); act.error = null; } catch (e) { act.error = String(e.message || e); }
   act.busy = false; act.fetched = Date.now();

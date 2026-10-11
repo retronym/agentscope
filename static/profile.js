@@ -277,7 +277,7 @@ function renderAllFlame() {
       <span class="seg">${ALL_RANGES.map(([r, l]) => `<button class="${!p.abs && p.range === r ? 'on' : ''}" onclick="act.sel=null;setProf('all', {range:${r}, abs:null, zoom: []})">${l.replace('last ', '')}</button>`).join('')}</span>
       ${p.abs ? `<span class="sub">selected ${new Date(p.abs[0] * 1000).toLocaleTimeString()}–${new Date(p.abs[1] * 1000).toLocaleTimeString()} <a href="#" onclick="act.sel=null;setProf('all',{abs:null,zoom:[]});return false">✕</a></span>` : ''}</div>
     <div class="profc"><div class="fg" id="fg-all"></div></div>`);
-  loadAllFlame();
+  if (!folded('jvmflame')) loadAllFlame();
 }
 async function loadAllFlame(force, quiet) {
   const p = prof.all;

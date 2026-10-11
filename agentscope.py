@@ -1190,6 +1190,9 @@ def serve(port):
 
     print(f"agentscope on http://localhost:{port}  (reading {', '.join(CLAUDE_DIRS) or 'no Claude config dirs found'})")
     print(f"JVMs from {', '.join(sampler.jvms.dirs) or 'nowhere: no hsperfdata directory found'}")
+    # socketserver listens with a backlog of 5: a page load's seven scripts and stylesheets at once overflowed it, and
+    # macOS reset the extra connections (activity.js went missing, now and then, on reload)
+    ThreadingHTTPServer.request_queue_size = 128
     ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
 
 

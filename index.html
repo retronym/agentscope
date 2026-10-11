@@ -64,6 +64,11 @@ label.chk { color: var(--ink-2); display: flex; gap: 4px; align-items: center; c
 main { padding: 14px 20px 60px; display: flex; flex-direction: column; gap: 22px; }
 section { scroll-margin-top: calc(var(--header-h, 150px) + 8px); }
 section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); margin: 0 0 8px; display: flex; gap: 10px; align-items: baseline; }
+section.fold > h2, .fold > .profh > b:first-child { cursor: pointer; user-select: none; }
+section.fold > h2::before, .fold > .profh > b:first-child::before { content: '▾'; display: inline-block; width: .9em; color: var(--muted); transition: transform .12s; }
+.folded > h2::before, .folded > .profh > b:first-child::before { transform: rotate(-90deg); }
+.fold.folded > :not(h2):not(.profh) { display: none !important; }
+section.folded > h2 { margin-bottom: 0; }
 section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
@@ -236,24 +241,24 @@ section.only-part > :not(h2):not(.only-this) { display: none !important; }
   <nav id="crumbs" class="crumbs"></nav>
 </header>
 <main>
-  <section id="sec-now">
+  <section id="sec-now" class="fold">
     <h2>Now <span class="sub">live sessions and anything active in the last 2h · CPU from cputime deltas, attributed by process ancestry (else by cwd)</span></h2>
     <div class="panel" id="machine"></div>
     <div style="height:10px"></div>
     <div class="cards" id="cards"></div>
     <div id="orphans"></div>
   </section>
-  <section id="sec-jvms">
+  <section id="sec-jvms" class="fold">
     <h2>JVMs <span class="sub" id="jvm-sub"></span></h2>
-    <div id="jvmactivity" hidden></div>
+    <div id="jvmactivity" class="fold" hidden></div>
     <div class="panel jvms" id="jvms"></div>
-    <div id="jvmflame"></div>
+    <div id="jvmflame" class="fold"></div>
   </section>
-  <section id="sec-timeline">
+  <section id="sec-timeline" class="fold">
     <h2>Timeline <span class="sub">one lane per repo · bar = agent activity, ● = your prompt, ◇ PR opened, ◆ merged/closed (color = PR state), dashed = spawned-from · lane background = attributed CPU (darker = more cores)</span></h2>
     <div class="panel" id="timeline-wrap"><svg id="timeline" width="100%"></svg></div>
   </section>
-  <section id="sec-ends">
+  <section id="sec-ends" class="fold">
     <h2>Loose ends <span class="sub">things that fall out of your head</span></h2>
     <div class="ends" id="ends"></div>
   </section>
@@ -333,6 +338,18 @@ async function api(url) {
   return r.json();
 }
 
+// Folding: a section's heading, or a panel's bold title (.profh > b), folds it to that line; remembered per panel.
+// A folded panel skips its fetches and drawing (folded(id)); unfolding re-renders, and canvases redraw at their width.
+const folded = id => !!document.getElementById(id)?.classList.contains('folded');
+function applyFolds(root = document) { for (const el of root.querySelectorAll('.fold[id]')) el.classList.toggle('folded', localStore('fold.' + el.id) === '1'); }
+document.addEventListener('click', e => {
+  const t = e.target.closest('section.fold > h2, .fold > .profh > b:first-child');
+  if (!t || e.target.closest('a, button, input, select')) return;
+  const el = t.closest('.fold'), on = !el.classList.contains('folded');
+  el.classList.toggle('folded', on);
+  localStore('fold.' + el.id, on ? '1' : '');
+  if (!on) { if (S) render(); renderJvmBox(); dispatchEvent(new Event('resize')); }
+});
 function localStore(k, v) { try { if (v === undefined) return localStorage.getItem('as.' + k); localStorage.setItem('as.' + k, v); } catch (e) { return null; } }
 function ago(t) {
   if (!t) return '';
@@ -1096,6 +1113,7 @@ function setHash(kv) {
   if (next !== location.hash.slice(1)) history.replaceState(null, '', next ? '#' + next : location.pathname + location.search);
 }
 addEventListener('hashchange', applyHash);
+applyFolds();
 
 // Keep what you're looking at where it is while things above it change height: the 5-second refresh, a
 // flame graph loading, a section growing a row. The browser's own scroll anchoring gives up because patch() replaces
