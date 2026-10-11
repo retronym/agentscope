@@ -1,14 +1,11 @@
 package agentscope.profiler;
 
-import jdk.jfr.consumer.RecordedFrame;
-import jdk.jfr.consumer.RecordedMethod;
-
 import java.util.List;
 
 /**
  * What kind of work a native-aware stack (an async-profiler capture's) is: GC, JIT, VM, class loading, interpreter,
  * compiled Java... The same rules as async-profiler's own {@code jfrconv --classify} (one.convert.Classifier, Apache-2.0),
- * read from JFR frame types rather than its converter's, so the flame graph shows the categories it would.
+ * from the same frame types, read by the same parser ({@link CaptureFile}), so the flame graph shows the categories it would.
  */
 final class Classify {
   /** The category names, as async-profiler titles them. */
@@ -18,39 +15,16 @@ final class Classify {
   static final List<String> ALL = List.of(GC, JIT, VM, VTABLE_STUBS, NATIVE, INTERPRETER, C1_COMP, C2_COMP, ADAPTER, CLASS_INIT, CLASS_LOAD,
       CLASS_RESOLVE, CLASS_VERIFY, LAMBDA_INIT);
 
-  private static final byte INTERPRETED = 0, JIT_COMPILED = 1, INLINED = 2, NATIVE_T = 3, CPP = 4, KERNEL = 5, C1_COMPILED = 6;
+  static final byte INTERPRETED = 0, JIT_COMPILED = 1, INLINED = 2, NATIVE_T = 3, CPP = 4, KERNEL = 5, C1_COMPILED = 6;
 
   private Classify() { }
 
-  /** {@code frames}: leaf first, as JFR gives them. */
-  static String category(List<RecordedFrame> frames) {
-    int n = frames.size();
-    byte[] types = new byte[n];
-    String[] names = new String[n];
-    for (int i = 0; i < n; i++) {
-      RecordedFrame f = frames.get(i);
-      types[i] = type(f.getType());
-      RecordedMethod m = f.getMethod();
-      String method = m == null ? "" : m.getName();
-      boolean java = types[i] == INTERPRETED || types[i] == JIT_COMPILED || types[i] == INLINED || types[i] == C1_COMPILED;
-      names[i] = java && m.getType() != null ? m.getType().getName() + "." + method : method;
-    }
+  /** {@code names} and {@code types} (async-profiler's frame types, 0-6): leaf first, as JFR stores them. Java frames
+   *  are named "class.method", others by their symbol. */
+  static String category(String[] names, byte[] types) {
     String c = gcJit(names, types);
     if (c == null) c = classLoading(names, types);
     return c != null ? c : other(names, types);
-  }
-
-  private static byte type(String t) {
-    if (t == null) return JIT_COMPILED;
-    return switch (t) {
-      case "Interpreted" -> INTERPRETED;
-      case "JIT compiled", "C2 compiled" -> JIT_COMPILED;
-      case "Inlined" -> INLINED;
-      case "C++" -> CPP;
-      case "Kernel" -> KERNEL;
-      case "C1 compiled" -> C1_COMPILED;
-      default -> NATIVE_T;
-    };
   }
 
   private static String gcJit(String[] names, byte[] types) {

@@ -1,7 +1,5 @@
 package agentscope.profiler;
 
-import jdk.jfr.consumer.RecordingFile;
-
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,10 +20,7 @@ public final class Captures {
     String key = file + "|" + detail;
     Profile p = cache.get(key);
     if (p == null) {
-      p = new Profile(Runtime.getRuntime().availableProcessors(), detail, true);
-      try (RecordingFile f = new RecordingFile(file)) {
-        while (f.hasMoreEvents()) p.accept(f.readEvent());
-      }
+      p = CaptureFile.read(file, detail);
       cache.put(key, p);
     }
     return p;

@@ -33,7 +33,7 @@ public final class Profile {
   // interning
   private final Map<String, Integer> frameIds = new HashMap<>();
   private final List<String> frames = new ArrayList<>();
-  private final Map<IntArray, Integer> stackIds = new HashMap<>();
+  private final Map<StackKey, Integer> stackIds = new HashMap<>();
   private final List<int[]> stacks = new ArrayList<>();  // frame ids, root first
   // For allocation samples, the class allocated: a frame id ("byte[] [allocated]"), or -1. Part of a stack's identity,
   // so stacks that differ only in what they allocate are separate ids with the same frames; flame() can show it as the
@@ -121,7 +121,14 @@ public final class Profile {
 
   private void sample(long t, RecordedThread th, RecordedStackTrace st, int kind, long weight, int allocated) {
     if (th == null) return;
-    samples.add(t, thread(th), stack(st, allocated), kind, weight);
+    addSample(t, thread(th), stack(st, allocated), kind, weight);
+  }
+
+  /** A sample with interned thread and stack ids: {@link CaptureFile}'s way in, as well as {@link #accept}'s. */
+  void addSample(long t, int thread, int stack, int kind, long weight) {
+    first = Math.min(first, t);
+    last = Math.max(last, t);
+    samples.add(t, thread, stack, kind, weight);
     kindTotals[kind] += weight;
     kindSamples[kind]++;
   }
@@ -147,9 +154,12 @@ public final class Profile {
 
   private int thread(RecordedThread th) {
     if (th == null) return -1;
-    long id = th.getJavaThreadId() > 0 ? th.getJavaThreadId() : -th.getOSThreadId();
+    return internThread(th.getJavaThreadId() > 0 ? th.getJavaThreadId() : -th.getOSThreadId(), th.getJavaName() != null ? th.getJavaName() : th.getOSName());
+  }
+
+  /** {@code id}: the Java thread id, or minus the OS thread id for a thread with none. */
+  int internThread(long id, String name) {
     Integer i = threadIds.get(id);
-    String name = th.getJavaName() != null ? th.getJavaName() : th.getOSName();
     if (i == null) {
       i = threadNames.size();
       threadIds.put(id, i);
@@ -168,15 +178,12 @@ public final class Profile {
     int k = 0;
     if (st.isTruncated()) ids[k++] = frame("…");
     for (int j = fs.size() - 1; j >= 0; j--) ids[k++] = frame(fs.get(j));  // JFR is leaf first; we keep root first
-    int category = -1;
-    if (capture) {
-      category = frame(Classify.category(fs));
-      labelFrames.add(category);
-    }
-    int[] keyIds = Arrays.copyOf(ids, ids.length + 2);  // can't collide with a frame id:
-    keyIds[ids.length] = -2 - allocated;  // -1 or below
-    keyIds[ids.length + 1] = -2 - category;
-    IntArray key = new IntArray(keyIds);
+    return internStack(ids, allocated, -1);
+  }
+
+  /** {@code ids}: frame ids, root first (kept, not copied); {@code allocated}, {@code category}: frame ids, or -1. */
+  int internStack(int[] ids, int allocated, int category) {
+    StackKey key = new StackKey(ids, allocated, category);  // the frames themselves, not a copy: deep stacks are most of the memory
     Integer id = stackIds.get(key);
     if (id == null) {
       id = stacks.size();
@@ -200,20 +207,35 @@ public final class Profile {
   private int frame(RecordedFrame f) {
     RecordedMethod m = f.getMethod();
     if (m == null) return frame("?");
-    String owner = m.getType() == null ? null : m.getType().getName();
-    String ft = f.getType();
-    boolean java = ft == null || JAVA_FRAME_TYPES.contains(ft);
-    boolean library = owner == null || owner.isEmpty() || !java && ("C++".equals(ft) || "Kernel".equals(ft) || LIBRARY.matcher(owner).find());
-    // async-profiler's -F vtable puts the receiver of a megamorphic call above its vtable / itable stub as a Java frame
-    // with the class and an empty method name ("Vector.()" to jfr print, plain "Vector" to jfrconv)
-    if (java && !library && m.getName().isEmpty()) return frame(owner + " [receiver]");
-    String name = library ? m.getName() : owner + "." + m.getName();
-    if (java && detail.equals("line") && f.getLineNumber() >= 0) name += ":" + f.getLineNumber();
-    else if (java && detail.equals("bci") && f.getBytecodeIndex() >= 0) name += "@" + f.getBytecodeIndex();
-    return frame(java ? name : name + " [" + ft + "]");
+    return frame(frameName(m.getType() == null ? null : m.getType().getName(), m.getName(), f.getType(), f.getLineNumber(), f.getBytecodeIndex(), detail));
   }
 
-  private int frame(String name) {
+  /** A frame's name from its parts, whoever read them (the JDK's parser here, async-profiler's in {@link CaptureFile}).
+   *  {@code line}, {@code bci}: negative when unknown. */
+  static String frameName(String owner, String method, String type, int line, int bci, String detail) {
+    boolean java = type == null || JAVA_FRAME_TYPES.contains(type);
+    boolean library = owner == null || owner.isEmpty() || !java && ("C++".equals(type) || "Kernel".equals(type) || LIBRARY.matcher(owner).find());
+    // async-profiler's -F vtable puts the receiver of a megamorphic call above its vtable / itable stub as a Java frame
+    // with the class and an empty method name ("Vector.()" to jfr print, plain "Vector" to jfrconv)
+    if (java && !library && method.isEmpty()) return owner + " [receiver]";
+    String name = library ? method : owner + "." + method;
+    if (java && detail.equals("line") && line >= 0) name += ":" + line;
+    else if (java && detail.equals("bci") && bci >= 0) name += "@" + bci;
+    return java ? name : name + " [" + type + "]";
+  }
+
+  /** A category ({@link Classify}) as a frame, drawn as a label. */
+  int category(String name) {
+    int f = frame(name);
+    labelFrames.add(f);
+    return f;
+  }
+
+  String detail() {
+    return detail;
+  }
+
+  int frame(String name) {
     return frameIds.computeIfAbsent(name, n -> {
       frames.add(n);
       return frames.size() - 1;
@@ -706,9 +728,9 @@ public final class Profile {
     }
   }
 
-  private record IntArray(int[] a) {
-    @Override public boolean equals(Object o) { return o instanceof IntArray x && Arrays.equals(a, x.a); }
-    @Override public int hashCode() { return Arrays.hashCode(a); }
+  private record StackKey(int[] a, int allocated, int category) {
+    @Override public boolean equals(Object o) { return o instanceof StackKey x && allocated == x.allocated && category == x.category && Arrays.equals(a, x.a); }
+    @Override public int hashCode() { return (Arrays.hashCode(a) * 31 + allocated) * 31 + category; }
   }
 
   /** Parallel arrays with a moving start: append at the end, drop from the front. */
