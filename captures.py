@@ -4,7 +4,7 @@
 beside the database; the helper reads it on demand for flame graphs and diffs, `jfrconv` renders async-profiler's own
 HTML, and the file can be downloaded for JMC.
 """
-import json, os, shutil, subprocess, threading, time, traceback
+import glob, json, os, shutil, signal, subprocess, threading, time, traceback
 
 RETENTION_DAYS = 30
 
@@ -47,7 +47,7 @@ def asprof_args(mode, opts):
         flag = OPTIONS[k][0]
         if flag in args:
             args[args.index(flag) + 1] = v
-        elif k == "interval" or mode != "wall":  # wall clock has no allocation or lock profiling to tune
+        else:
             args += [flag, v]
     return args
 
@@ -79,6 +79,7 @@ class Captures:
     def __init__(self, db, helper, tracker, folder):
         self.db, self.helper, self.tracker, self.folder = db, helper, tracker, folder
         os.makedirs(folder, exist_ok=True)
+        self.procs = {}  # capture id -> the running asprof client, which Stop interrupts
         with db() as c:
             if "opts" not in [r[1] for r in c.execute("PRAGMA table_info(capture)")]:
                 c.execute("ALTER TABLE capture ADD COLUMN opts TEXT")
@@ -89,6 +90,8 @@ class Captures:
         if mode not in MODES:
             raise ValueError(f"mode: one of {list(MODES)}")
         opts = clean_opts(opts)
+        if mode == "wall":  # no allocation or lock profiling to tune: keep only what applies, as listed with the capture
+            opts = {k: v for k, v in opts.items() if k not in ("alloc", "lock")}
         seconds = max(5, min(int(seconds), 300))
         tool = asprof()
         if not tool:
@@ -108,18 +111,34 @@ class Captures:
 
     def _run(self, cid, tool, pid, args, seconds, path, stack_depth):
         status, error, kinds, size = "done", None, None, None
+        t0 = time.time()
         try:
-            r = subprocess.run([tool, *args, "-j", str(stack_depth), "-d", str(seconds), "-o", "jfr", "-f", path, str(pid)],
-                               capture_output=True, text=True, timeout=seconds + 60)
-            if r.returncode != 0 or not os.path.exists(path):
-                raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"asprof exited {r.returncode}")
+            p = subprocess.Popen([tool, *args, "-j", str(stack_depth), "-d", str(seconds), "-o", "jfr", "-f", path, str(pid)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.procs[cid] = p
+            try:
+                out, err = p.communicate(timeout=seconds + 60)
+            finally:
+                self.procs.pop(cid, None)
+            if p.returncode != 0 or not os.path.exists(path):
+                raise RuntimeError((err or out).strip().splitlines()[-1] if (err or out).strip() else f"asprof exited {p.returncode}")
             size = os.path.getsize(path)
             kinds = self.helper.call("capture_stats", timeout=120, path=path)["stats"].get("kinds", {})
         except Exception as e:
             status, error = "failed", str(e)
         with self.db() as c:
-            c.execute("UPDATE capture SET status = ?, error = ?, path = ?, bytes = ?, kinds = ?, finished = ? WHERE id = ?",
-                      (status, error, path if status == "done" else None, size, json.dumps(kinds) if kinds else None, time.time(), cid))
+            # stopped early: the seconds it actually ran
+            c.execute("UPDATE capture SET status = ?, error = ?, path = ?, bytes = ?, kinds = ?, finished = ?, seconds = MIN(seconds, ?) WHERE id = ?",
+                      (status, error, path if status == "done" else None, size, json.dumps(kinds) if kinds else None, time.time(),
+                       max(1, round(time.time() - t0)), cid))
+
+    def stop(self, cid):
+        """Ends a running capture now. Interrupted, the asprof client stops the profiler and writes what it has, as at the
+        end of its duration, so the capture finishes as usual, just shorter."""
+        p = self.procs.get(cid)
+        if not p:
+            raise ValueError("no such capture running")
+        p.send_signal(signal.SIGTERM)
 
     def list(self, jvm_id=None, limit=50):
         q = "SELECT id, jvm_id, pid, mode, seconds, started, finished, status, error, bytes, kinds, opts FROM capture"
@@ -147,23 +166,24 @@ class Captures:
             args["base"] = self.path(base)
         return self.helper.call("capture_flame", timeout=120, **args)["flame"]
 
-    def html(self, cid, kind, frames=""):
+    def html(self, cid, kind, frames="", reverse=False):
         tool = jfrconv()
         if not tool:
             raise RuntimeError("jfrconv (async-profiler's converter) isn't installed")
         if frames not in ("", "line", "bci"):
             raise ValueError("frames: '', line or bci")
-        out = self.path(cid)[:-4] + f"-{kind}{'-' + frames if frames else ''}.html"
+        out = self.path(cid)[:-4] + f"-{kind}{'-' + frames if frames else ''}{'-rev' if reverse else ''}.html"
         if not os.path.exists(out):
             flag = {"cpu": "--cpu", "wall": "--wall", "alloc": "--alloc", "live": "--live", "nativemem": "--nativemem", "lock": "--lock", "nativelock": "--lock"}.get(kind, "--cpu")
-            r = subprocess.run([tool, flag, *(["--" + frames] if frames else []), "-o", "html", self.path(cid), out], capture_output=True, text=True, timeout=120)
+            r = subprocess.run([tool, flag, *(["--" + frames] if frames else []), *(["--reverse"] if reverse else []), "-o", "html", self.path(cid), out],
+                               capture_output=True, text=True, timeout=120)
             if r.returncode != 0:
                 raise RuntimeError((r.stderr or r.stdout).strip()[-300:])
         return open(out, encoding="utf-8").read()
 
     def prune(self, c, now):
         for (path,) in c.execute("SELECT path FROM capture WHERE started < ? AND path IS NOT NULL", (now - RETENTION_DAYS * 86400,)).fetchall():
-            for f in [path] + [path[:-4] + f"-{k}{d}.html" for k in ("cpu", "wall", "alloc", "live", "nativemem", "lock", "nativelock") for d in ("", "-line", "-bci")]:
+            for f in [path] + glob.glob(glob.escape(path[:-4]) + "-*.html"):
                 try:
                     os.remove(f)
                 except OSError:

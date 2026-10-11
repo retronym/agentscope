@@ -48,6 +48,12 @@ async function startCapture(jvmId, mode) {
   loadCaptures(jvmId, true);
 }
 
+async function stopCapture(jvmId, cid, btn) {
+  if (btn) { btn.disabled = true; btn.lastChild.textContent = 'Stopping…'; }
+  try { await post('/api/capture/stop', { id: cid }); } catch (e) { alert('Stop failed: ' + (e.message || e)); }
+  loadCaptures(jvmId, true);
+}
+
 function renderCaptures(jvmId) {
   const el = document.querySelector('#jvmbox .jbox-cap'); if (!el) return;
   if (DEMO) { patch(el, ''); return; }
@@ -60,7 +66,8 @@ function renderCaptures(jvmId) {
       ${CAP_MODES.map(([m, l]) => `<span class="split ${capPanel === m ? 'open' : ''}"><button class="btn-link" ${running ? 'disabled' : ''} onclick="startCapture(${jvmId}, '${m}')" title="capture ${capSecs()} s${sum ? ' with ' + esc(sum) : ''}">● ${l}</button><button class="btn-link caret" ${running ? 'disabled' : ''} title="capture with settings…" onclick="capPanel=capPanel==='${m}'?null:'${m}';renderCaptures(${jvmId})">▾</button></span>`).join('')}
       <select class="recscope" onchange="capSeconds=+this.value;localStore('capSeconds', this.value);renderCaptures(${jvmId})">${[10, 30, 60, 120].map(s => `<option value="${s}" ${s === capSecs() ? 'selected' : ''}>${s} s</option>`).join('')}</select>
       ${sum ? `<a href="#" class="sub capsum" title="settings for every capture: click to change" onclick="capPanel=capPanel||'cpu';renderCaptures(${jvmId});return false">⚙ ${esc(sum)}</a>` : ''}
-      ${running ? `<span class="sub">capturing… ${clock(Math.max(0, running.started + running.seconds - Date.now() / 1000))} left</span>` : ''}</div>
+      ${running ? `<span class="sub">capturing… ${clock(Math.max(0, running.started + running.seconds - Date.now() / 1000))} left</span>
+        <button class="recbtn sm on" title="stop now and keep what's been captured" onclick="stopCapture(${jvmId}, ${running.id}, this)"><i></i>Stop</button>` : ''}</div>
     ${capPanel && !running ? capSettings(jvmId, capPanel) : ''}
     ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
     ${p ? `<div class="profc"><div class="fg" id="fg-${open}"></div></div>` : ''}`);
@@ -88,7 +95,7 @@ function capRow(r, rows, p) {
   return `<tr class="${shown ? 'open' : ''}"><td class="sub">${new Date(r.started * 1000).toLocaleTimeString()}</td><td>${esc(r.mode_label)} <span class="sub">${r.seconds} s${capOptsSummary(r.opts || {}) ? ' · ' + esc(capOptsSummary(r.opts)) : ''}</span></td><td>${st}</td>
     <td>${kinds.map(k => `<button class="btn-link ${shown && p.kind === k ? 'on' : ''}" onclick="showCapture(${r.jvm_id}, ${r.id}, '${k}')">${esc(KIND_LABEL[k] || k)}</button>`).join(' ')}
       ${shown && others.length ? `<select class="recscope" title="compare with an earlier or later capture" onchange="setCapBase(${r.id}, this.value)"><option value="">diff against…</option>${others.map(o => `<option value="${o.id}" ${p.base === o.id ? 'selected' : ''}>${new Date(o.started * 1000).toLocaleTimeString()} ${esc(o.mode)}</option>`).join('')}</select>` : ''}</td>
-    <td style="white-space:nowrap">${r.status === 'done' ? `<a class="sub" href="/api/capture/html?id=${r.id}&kind=${shown ? p.kind : kinds[0] || 'cpu'}${shown && p.frames ? '&frames=' + p.frames : ''}" target="_blank" title="async-profiler's own flame graph (jfrconv)">↗ async-profiler</a> · <a class="sub" href="/api/capture/file?id=${r.id}" title="the .jfr, for JMC or jfrconv">⤓ .jfr</a>` : ''}</td></tr>`;
+    <td style="white-space:nowrap">${r.status === 'done' ? `<span class="sub">↗ async-profiler:</span> ${[[0, 'top-down'], [1, 'reversed']].map(([rv, l]) => `<a class="sub" href="/api/capture/html?id=${r.id}&kind=${shown ? p.kind : kinds[0] || 'cpu'}${shown && p.frames ? '&frames=' + p.frames : ''}${rv ? '&reverse=1' : ''}" target="_blank" title="async-profiler's own flame graph (jfrconv${rv ? ' --reverse' : ''})">${l}</a>`).join(' ')} · <a class="sub" href="/api/capture/file?id=${r.id}" title="the .jfr, for JMC or jfrconv">⤓ .jfr</a>` : ''}</td></tr>`;
 }
 
 function showCapture(jvmId, cid, kind) {

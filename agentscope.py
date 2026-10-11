@@ -1137,7 +1137,7 @@ def serve(port):
                                                                int(q["base"]) if q.get("base") else None, zoom_path(q), q.get("frames", ""),
                                                                q.get("classes") == "1")), "application/json")
                 elif path == "/api/capture/html":
-                    self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("frames", "")), "text/html; charset=utf-8")
+                    self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("frames", ""), q.get("reverse") == "1"), "text/html; charset=utf-8")
                 elif path == "/api/capture/file":
                     p = _captures.path(int(q.get("id", 0)))
                     data = open(p, "rb").read()
@@ -1178,6 +1178,9 @@ def serve(port):
                     cid = _captures.start(int(body.get("id", 0)), str(body.get("mode", "cpu")), int(body.get("seconds", 30)),
                                           sampler.recorder.settings["capture_depth"], body.get("opts") if isinstance(body.get("opts"), dict) else None)
                     self._send(200, json.dumps(dict(id=cid)), "application/json")
+                elif self.path == "/api/capture/stop":
+                    _captures.stop(int(body.get("id", 0)))
+                    self._send(200, json.dumps(dict(ok=True)), "application/json")
                 elif self.path == "/api/settings":
                     self._send(200, json.dumps(sampler.recorder.set_settings(**{k: body.get(k) for k in recording.DEFAULTS})), "application/json")
                 elif self.path == "/api/jvm/record":
