@@ -1097,7 +1097,7 @@ function setHash(kv) {
 }
 addEventListener('hashchange', applyHash);
 
-// Keep what's at the top of the screen where it is while things above it change height: the 5-second refresh, a
+// Keep what you're looking at where it is while things above it change height: the 5-second refresh, a
 // flame graph loading, a section growing a row. The browser's own scroll anchoring gives up because patch() replaces
 // the nodes it anchors to, so this anchors to keyed elements (ids, session cards, JVM rows) and finds them again.
 const Anchor = (() => {
@@ -1107,7 +1107,9 @@ const Anchor = (() => {
     if (adjusting) return;
     chain = null;
     if (scrollY < 2) return;  // at the very top: stay there
-    const main = document.querySelector('main'), m = main.getBoundingClientRect(), y = document.querySelector('header').getBoundingClientRect().bottom + 4;
+    // what you're looking at: a third of the way down the visible area, not the sliver just under the header
+    const main = document.querySelector('main'), m = main.getBoundingClientRect(), hb = document.querySelector('header').getBoundingClientRect().bottom;
+    const y = hb + (innerHeight - hb) / 3;
     for (const x of [m.left + 40, m.left + m.width / 2, m.right - 40]) {
       let e = document.elementFromPoint(x, y);
       if (!e || !main.contains(e)) continue;
