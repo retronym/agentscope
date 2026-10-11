@@ -86,7 +86,8 @@ function profileSection(j) {
       ${depthSelect('record_depth', [64, 128, 256, 512, 1024, 2048], 'Stack depth for new recordings. JFR takes it only in a JVM where JFR hasn\'t started yet; deeper stacks cost a little more per sample.')}
       ${r.stack_depth ? `<span class="sub" title="the depth this recording actually has">depth ${r.stack_depth}${r.stack_depth < S.record.settings.record_depth ? ' (JFR was already running in this JVM)' : ''}</span>` : ''}
       <span class="sub" id="profstat-${j.id}"></span></div>
-    <div class="profc"><canvas id="heat-${j.id}"></canvas><canvas id="lanes-${j.id}"></canvas>
+    <div class="profc"><div class="${foldClass('pheat')}" id="pheat"><div class="profh sm"><b>Heatmap</b></div><canvas id="heat-${j.id}"></canvas></div>
+      <div class="${foldClass('planes')}" id="planes"><div class="profh sm"><b>Thread lanes</b><span class="sub">click a name to show only that thread or group below</span></div><canvas id="lanes-${j.id}"></canvas></div>
       <div class="fg" id="fg-${j.id}"></div></div>`;
 }
 const qid = id => typeof id === 'string' ? `'${id}'` : id;
@@ -109,7 +110,7 @@ async function loadProfile(id, force, quiet) {
   try {
     const since = nowSec() - p.window, [t0, t1] = p.sel || [since, nowSec() + 5];
     const [summary, flame] = await Promise.all([api(`/api/jvm/summary?id=${id}&since=${since}&bins=${Math.min(300, p.window)}`),
-      api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}${zq(p)}`)]);
+      api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}&classes=${p.classes ? 1 : 0}${zq(p)}`)]);
     Object.assign(p, { summary, flame, error: null });
   } catch (e) { p.error = String(e.message || e); Flame.busy(id, false); }
   p.busy = false; p.fetched = Date.now();
@@ -237,8 +238,10 @@ function brush(c, id, w, s, laneAt) {
 }
 
 // ---------------------------------------------------------------- flame graph (icicle: root on top), click to zoom
-const unit = (kind, v) => kind === 'cpu' || kind === 'native' || kind === 'wall' ? `${v} samples` : kind === 'alloc' ? mb(v) + ' allocated (sampled)' :
-  kind === 'live' ? mb(v) + ' live' : kind === 'nativemem' ? mb(v) + ' malloc\'d' : `${(v / 1000).toFixed(1)} s waited`;
+// waits are in ms, or µs in captures (wait_us), where --lock goes well under a millisecond
+const unit = (kind, v, f) => kind === 'cpu' || kind === 'native' || kind === 'wall' ? `${v} samples` : kind === 'alloc' ? mb(v) + ' allocated (sampled)' :
+  kind === 'live' ? mb(v) + ' live' : kind === 'nativemem' ? mb(v) + ' malloc\'d' : waited(f?.wait_us ? v / 1e6 : v / 1000);
+const waited = s => (s >= 1 ? s.toFixed(1) + ' s' : s >= 1e-3 ? (s * 1e3).toFixed(1) + ' ms' : Math.round(s * 1e6) + ' µs') + ' waited';
 // The flame graph's zoom path, for detail below it (the server prunes small nodes relative to the zoomed subtree there)
 const zq = p => p.zpath?.length ? '&path=' + encodeURIComponent(JSON.stringify(p.zpath)) : '';
 // Flame graphs are static/flame.js; this hands each one its data and a title.
@@ -250,8 +253,12 @@ function drawFlame(id) {
   const what = String(id).startsWith('cap') ? (f.diff ? 'difference against the chosen capture: red grew, blue shrank' : 'capture')
     : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM'
     : p.sel ? 'selected range' : 'whole window';
-  const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · ${p.thread.group ? 'threads' : 'thread'} ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>`;
-  Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),
+  // display options the server applies: the class allocated as the top frame (not stored per minute, so not Across JVMs),
+  // and for captures, Java frames by line or bytecode index
+  const opts = (id !== 'all' && (p.kind === 'alloc' || p.kind === 'live') ? `<button class="fg-t ${p.classes ? 'on' : ''}" title="the class allocated as the top frame (the root when reversed)" onclick="setProf(${qid(id)}, {classes: ${!p.classes}, zpath: []})">class</button>` : '')
+    + (String(id).startsWith('cap') ? `<span class="seg" title="how Java frames are named (jfrconv's --lines / --bci)">${[['', 'method'], ['line', 'line'], ['bci', 'bci']].map(([k, l]) => `<button class="${(p.frames || '') === k ? 'on' : ''}" onclick="setProf(${qid(id)}, {frames: '${k}', zpath: []})">${l}</button>`).join('')}</span>` : '');
+  const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · ${p.thread.group ? 'threads' : 'thread'} ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total, f)) : f.samples ? f.samples + ' samples, each under the unit' : 'no samples'}</span>${opts}`;
+  Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v, f), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),
     onZoom: path => { p.zpath = path; p.load ? p.load(true) : id === 'all' ? loadAllFlame(true, true) : loadProfile(id, true, true); } });
 }
 const shortName = n => n.replace(/^([a-z_$][\w$]*\.)+(?=[A-Z_$][\w$]*[.$])/, m => m.split('.').filter(Boolean).map(x => x[0]).join('.') + '.');

@@ -1,5 +1,6 @@
 package agentscope.profiler;
 
+import jdk.jfr.consumer.RecordedClass;
 import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordedFrame;
 import jdk.jfr.consumer.RecordedMethod;
@@ -27,13 +28,17 @@ public final class Profile {
   /** Sample kinds, also the {@code kind} names queries take. The last four come from async-profiler captures. */
   public static final int CPU = 0, NATIVE = 1, ALLOC = 2, LOCK = 3, PARK = 4, WALL = 5, LIVE = 6, NATIVEMEM = 7, NATIVELOCK = 8;
   static final List<String> KINDS = List.of("cpu", "native", "alloc", "lock", "park", "wall", "live", "nativemem", "nativelock");
-  private final long[] kindTotals = new long[KINDS.size()];
+  private final long[] kindTotals = new long[KINDS.size()], kindSamples = new long[KINDS.size()];
 
   // interning
   private final Map<String, Integer> frameIds = new HashMap<>();
   private final List<String> frames = new ArrayList<>();
   private final Map<IntArray, Integer> stackIds = new HashMap<>();
   private final List<int[]> stacks = new ArrayList<>();  // frame ids, root first
+  // For allocation samples, the class allocated: a frame id ("byte[] [allocated]"), or -1. Part of a stack's identity,
+  // so stacks that differ only in what they allocate are separate ids with the same frames; flame() can show it as the
+  // top frame, and everything else (activities, minutes, diffs) ignores it.
+  private final List<Integer> stackClass = new ArrayList<>();
   private final List<Activities.Activity> stackActivity = new ArrayList<>();  // by stack id, classified lazily
   private final Map<Long, Integer> threadIds = new HashMap<>();
   private final List<String> threadNames = new ArrayList<>();
@@ -48,10 +53,28 @@ public final class Profile {
   private final List<String> gcNames = new ArrayList<>();
 
   private final int ncpu;
+  /** How Java frames are named: by method ("" ), or with their line ("line": name:42) or bytecode index ("bci": name@17). */
+  private final String detail;
+  /** Lock and park waits in µs rather than ms: captures, where --lock can go well under a millisecond. */
+  private final boolean waitMicros;
   private long first = Long.MAX_VALUE, last, events;
 
   public Profile(int ncpu) {
+    this(ncpu, "");
+  }
+
+  public Profile(int ncpu, String detail) {
+    this(ncpu, detail, false);
+  }
+
+  public Profile(int ncpu, String detail, boolean waitMicros) {
     this.ncpu = ncpu;
+    this.detail = detail == null ? "" : detail;
+    this.waitMicros = waitMicros;
+  }
+
+  private long waited(RecordedEvent e) {
+    return waitMicros ? e.getDuration().toNanos() / 1000 : e.getDuration().toMillis();
   }
 
   // ---------------------------------------------------------------- ingest
@@ -63,16 +86,16 @@ public final class Profile {
     switch (e.getEventType().getName()) {
       case "jdk.ExecutionSample" -> sample(t, e.getThread("sampledThread"), e.getStackTrace(), CPU, 1);
       case "jdk.NativeMethodSample" -> sample(t, e.getThread("sampledThread"), e.getStackTrace(), NATIVE, 1);
-      case "jdk.ObjectAllocationSample" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), ALLOC, e.getLong("weight"));
-      case "jdk.JavaMonitorEnter" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), LOCK, e.getDuration().toMillis());
-      case "jdk.ThreadPark" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), PARK, e.getDuration().toMillis());
+      case "jdk.ObjectAllocationSample" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), ALLOC, e.getLong("weight"), allocated(e));
+      case "jdk.JavaMonitorEnter" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), LOCK, waited(e));
+      case "jdk.ThreadPark" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), PARK, waited(e));
       // async-profiler's events (in capture files); weights are what its own converter totals
       case "profiler.WallClockSample" -> sample(t, e.getThread("sampledThread"), e.getStackTrace(), WALL, e.hasField("samples") ? Math.max(1, e.getInt("samples")) : 1);
       case "jdk.ObjectAllocationInNewTLAB", "jdk.ObjectAllocationOutsideTLAB" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), ALLOC,
-          e.hasField("tlabSize") && e.getLong("tlabSize") > 0 ? e.getLong("tlabSize") : e.getLong("allocationSize"));
-      case "profiler.LiveObject" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), LIVE, e.getLong("allocationSize"));
+          e.hasField("tlabSize") && e.getLong("tlabSize") > 0 ? e.getLong("tlabSize") : e.getLong("allocationSize"), allocated(e));
+      case "profiler.LiveObject" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), LIVE, e.getLong("allocationSize"), allocated(e));
       case "profiler.Malloc" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), NATIVEMEM, e.getLong("size"));
-      case "profiler.NativeLock" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), NATIVELOCK, e.getDuration().toMillis());
+      case "profiler.NativeLock" -> sample(t, e.getThread("eventThread"), e.getStackTrace(), NATIVELOCK, waited(e));
       case "jdk.ThreadCPULoad" -> {
         // user and system are fractions of the whole machine; scale to cores
         double load = (e.getFloat("user") + e.getFloat("system")) * ncpu;
@@ -88,9 +111,33 @@ public final class Profile {
   }
 
   private void sample(long t, RecordedThread th, RecordedStackTrace st, int kind, long weight) {
+    sample(t, th, st, kind, weight, -1);
+  }
+
+  private void sample(long t, RecordedThread th, RecordedStackTrace st, int kind, long weight, int allocated) {
     if (th == null) return;
-    samples.add(t, thread(th), stack(st), kind, weight);
+    samples.add(t, thread(th), stack(st, allocated), kind, weight);
     kindTotals[kind] += weight;
+    kindSamples[kind]++;
+  }
+
+  /** The allocated class of an allocation event, as a frame: "byte[] [allocated]", "java.lang.String [allocated]". */
+  private int allocated(RecordedEvent e) {
+    RecordedClass c = e.hasField("objectClass") ? e.getClass("objectClass") : null;
+    return c == null || c.getName() == null ? -1 : frame(prettyClass(c.getName()) + " [allocated]");
+  }
+
+  /** [B -> byte[], [Ljava.lang.String; -> java.lang.String[], java/lang/String -> java.lang.String */
+  static String prettyClass(String n) {
+    int dims = 0;
+    while (dims < n.length() && n.charAt(dims) == '[') dims++;
+    String base = n.substring(dims);
+    if (dims > 0) base = switch (base) {
+      case "B" -> "byte"; case "C" -> "char"; case "D" -> "double"; case "F" -> "float"; case "I" -> "int"; case "J" -> "long";
+      case "S" -> "short"; case "Z" -> "boolean";
+      default -> base.startsWith("L") && base.endsWith(";") ? base.substring(1, base.length() - 1) : base;
+    };
+    return base.replace('/', '.') + "[]".repeat(dims);
   }
 
   private int thread(RecordedThread th) {
@@ -109,19 +156,22 @@ public final class Profile {
     return i;
   }
 
-  private int stack(RecordedStackTrace st) {
+  private int stack(RecordedStackTrace st, int allocated) {
     if (st == null) return -1;
     List<RecordedFrame> fs = st.getFrames();
     int[] ids = new int[fs.size() + (st.isTruncated() ? 1 : 0)];
     int k = 0;
     if (st.isTruncated()) ids[k++] = frame("…");
     for (int j = fs.size() - 1; j >= 0; j--) ids[k++] = frame(fs.get(j));  // JFR is leaf first; we keep root first
-    IntArray key = new IntArray(ids);
+    int[] keyIds = allocated < 0 ? ids : Arrays.copyOf(ids, ids.length + 1);
+    if (allocated >= 0) keyIds[ids.length] = -2 - allocated;  // can't collide with a frame id
+    IntArray key = new IntArray(keyIds);
     Integer id = stackIds.get(key);
     if (id == null) {
       id = stacks.size();
       stackIds.put(key, id);
       stacks.add(ids);
+      stackClass.add(allocated);
     }
     return id;
   }
@@ -143,6 +193,8 @@ public final class Profile {
     boolean java = ft == null || JAVA_FRAME_TYPES.contains(ft);
     boolean library = owner == null || owner.isEmpty() || !java && ("C++".equals(ft) || "Kernel".equals(ft) || LIBRARY.matcher(owner).find());
     String name = library ? m.getName() : owner + "." + m.getName();
+    if (java && detail.equals("line") && f.getLineNumber() >= 0) name += ":" + f.getLineNumber();
+    else if (java && detail.equals("bci") && f.getBytecodeIndex() >= 0) name += "@" + f.getBytecodeIndex();
     return frame(java ? name : name + " [" + ft + "]");
   }
 
@@ -246,6 +298,12 @@ public final class Profile {
 
   /** As {@link #flame}, with full detail (relative to it) below the zoom {@code path}. */
   public synchronized Map<String, Object> flame(long t0, long t1, String kindName, List<Long> threadFilter, double minShare, boolean reverse, List<String> path) {
+    return flame(t0, t1, kindName, threadFilter, minShare, reverse, path, false);
+  }
+
+  /** As {@link #flame}; {@code classes}: for allocation kinds, the class allocated as the top frame (the root when reversed). */
+  public synchronized Map<String, Object> flame(long t0, long t1, String kindName, List<Long> threadFilter, double minShare, boolean reverse, List<String> path,
+                                                boolean classes) {
     int kind = KINDS.indexOf(kindName);
     if (kind < 0) throw new IllegalArgumentException("kind: one of " + KINDS);
     boolean[] want = null;
@@ -270,16 +328,20 @@ public final class Profile {
       if (s < 0) continue;
       Node cur = root;
       int[] st = stacks.get(s);
+      int cls = classes ? stackClass.get(s) : -1;
+      if (cls >= 0 && reverse) (cur = cur.child(cls)).value += w;
       for (int k = 0; k < st.length; k++) {
         cur = cur.child(st[reverse ? st.length - 1 - k : k]);
         cur.value += w;
       }
+      if (cls >= 0 && !reverse) (cur = cur.child(cls)).value += w;
     }
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("kind", kindName);
     out.put("reverse", reverse);
     out.put("total", total);
     out.put("samples", n);
+    if (waitMicros) out.put("wait_us", true);
     long min = Math.max(1, (long) (total * minShare)), at = path.isEmpty() ? -1 : root.valueAt(frames, path);
     out.put("root", root.toJson(frames, min, "all", path, 0, false, at > 0 ? Math.max(1, (long) (at * minShare)) : min));
     if (!path.isEmpty()) out.put("path", path);
@@ -411,7 +473,7 @@ public final class Profile {
     Map<String, Object> m = new LinkedHashMap<>();
     m.put("samples", samples.size());
     Map<String, Long> kinds = new LinkedHashMap<>();
-    for (int k = 0; k < KINDS.size(); k++) if (kindTotals[k] > 0) kinds.put(KINDS.get(k), kindTotals[k]);
+    for (int k = 0; k < KINDS.size(); k++) if (kindSamples[k] > 0) kinds.put(KINDS.get(k), kindTotals[k]);  // a kind with samples, even if they weigh 0
     m.put("kinds", kinds);
     m.put("stacks", stacks.size());
     m.put("frames", frames.size());
@@ -547,6 +609,7 @@ public final class Profile {
     out.put("diff", true);
     out.put("total", tb);
     out.put("before_total", ta);
+    if (after.waitMicros) out.put("wait_us", true);
     out.put("root", root.toJson("all", Math.max(1, (long) (Math.max(ta, tb) * minShare))));
     return out;
   }

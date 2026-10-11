@@ -1000,7 +1000,7 @@ def build_state(sampler):
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
     return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), jvm_helper=_helper.unavailable(),
                 record=sampler.recorder.state(time.time()) if sampler.recorder else None,
-                asprof=bool(captures.asprof()) if sampler.recorder else False, claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+                asprof=bool(captures.asprof()) if sampler.recorder else False, capture_options=dict(options={k: v[1] for k, v in captures.OPTIONS.items()}, features=captures.FEATURES), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -1124,7 +1124,8 @@ def serve(port):
                     pid = sampler.recorder.pid_of(int(q.get("id", 0)))
                     threads = [int(x) for x in q.get("threads", "").split(",") if x.lstrip("-").isdigit()]
                     r = _helper.call("flame", pid=pid, t0=int(float(q.get("t0", 0)) * 1000), t1=int(float(q.get("t1", 1e12)) * 1000),
-                                     kind=q.get("kind", "cpu"), threads=threads, group=q.get("group") or None, reverse=q.get("reverse") == "1", path=zoom_path(q))
+                                     kind=q.get("kind", "cpu"), threads=threads, group=q.get("group") or None, reverse=q.get("reverse") == "1", path=zoom_path(q),
+                                     classes=q.get("classes") == "1")
                     self._send(200, json.dumps(r["flame"]), "application/json")
                 elif path == "/api/activity":
                     w = int(q.get("window", 300))
@@ -1133,9 +1134,10 @@ def serve(port):
                     self._send(200, json.dumps(_captures.list(int(q["jvm"]) if q.get("jvm") else None)), "application/json")
                 elif path == "/api/capture/flame":
                     self._send(200, json.dumps(_captures.flame(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("reverse") == "1",
-                                                               int(q["base"]) if q.get("base") else None, zoom_path(q))), "application/json")
+                                                               int(q["base"]) if q.get("base") else None, zoom_path(q), q.get("frames", ""),
+                                                               q.get("classes") == "1")), "application/json")
                 elif path == "/api/capture/html":
-                    self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu")), "text/html; charset=utf-8")
+                    self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("frames", "")), "text/html; charset=utf-8")
                 elif path == "/api/capture/file":
                     p = _captures.path(int(q.get("id", 0)))
                     data = open(p, "rb").read()
@@ -1174,7 +1176,7 @@ def serve(port):
                     self._send(200, json.dumps(sampler.recorder.state(time.time())), "application/json")
                 elif self.path == "/api/jvm/capture":
                     cid = _captures.start(int(body.get("id", 0)), str(body.get("mode", "cpu")), int(body.get("seconds", 30)),
-                                          sampler.recorder.settings["capture_depth"])
+                                          sampler.recorder.settings["capture_depth"], body.get("opts") if isinstance(body.get("opts"), dict) else None)
                     self._send(200, json.dumps(dict(id=cid)), "application/json")
                 elif self.path == "/api/settings":
                     self._send(200, json.dumps(sampler.recorder.set_settings(**{k: body.get(k) for k in recording.DEFAULTS})), "application/json")

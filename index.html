@@ -341,6 +341,7 @@ async function api(url) {
 // Folding: a section's heading, or a panel's bold title (.profh > b), folds it to that line; remembered per panel.
 // A folded panel skips its fetches and drawing (folded(id)); unfolding re-renders, and canvases redraw at their width.
 const folded = id => !!document.getElementById(id)?.classList.contains('folded');
+const foldClass = id => 'fold' + (localStore('fold.' + id) === '1' ? ' folded' : '');  // for folds inside regenerated HTML
 function applyFolds(root = document) { for (const el of root.querySelectorAll('.fold[id]')) el.classList.toggle('folded', localStore('fold.' + el.id) === '1'); }
 document.addEventListener('click', e => {
   const t = e.target.closest('section.fold > h2, .fold > .profh > b:first-child');

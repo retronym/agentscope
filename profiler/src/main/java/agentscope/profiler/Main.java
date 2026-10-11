@@ -23,13 +23,14 @@ import java.util.concurrent.Executors;
  * {"id": 3, "op": "threads", "pid": 123, "interval_ms": 1000}   → {"id": 3, "dump": {...}}
  * {"id": 4, "op": "record_start", "pid": 123}                     → {"id": 4, "recording": {...}}   (also record_stop, recordings)
  * {"id": 5, "op": "summary", "pid": 123, "since": ms, "bins": 300} → {"id": 5, "summary": {...}}   thread lanes, heatmap, GC
- * {"id": 6, "op": "flame", "pid": 123, "t0": ms, "t1": ms, "kind": "cpu", "threads": [ids], "group": "pool-*-thread-*"?, "reverse": false} → {"id": 6, "flame": {...}}
+ * {"id": 6, "op": "flame", "pid": 123, "t0": ms, "t1": ms, "kind": "cpu", "threads": [ids], "group": "pool-*-thread-*"?, "reverse": false, "classes": false} → {"id": 6, "flame": {...}}
  * {"id": 7, "op": "activities", "pid": 123, "since": ms}    → {"id": 7, "activities": [{activity, samples, threads}]}
  * {"op": "thread_activity", "pid": 123, "since": ms, "bins": 150}  → {"threads": {...}}  per thread: activity per bin, and right now
  * {"id": 8, "op": "minute", "pid": 123, "t0": ms, "t1": ms}  → {"id": 8, "minute": {groups, rows}}   exact, for storage
  * {"id": 9, "op": "stacks", "pid": 123, "ids": [stack ids]}   → {"id": 9, "stacks": {frames, stacks}}  definitions
  * {"op": "dump", "pid": 123, "since": ms}  → {"dump": {frames, stacks, threads, samples, cpu, gc}}   raw, for the demo's fixture
- * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?}   async-profiler captures; base: a diff
+ * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?, "frames": "line"?, "classes": true?}
+ *     async-profiler captures; base: a diff; frames: Java frames with their line or bytecode index ("bci"); classes: the class allocated as the top frame
  * anything failing                                       → {"id": n, "error": "..."}
  * </pre>
  */
@@ -99,7 +100,8 @@ public final class Main {
           if (req.get("threads") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) threads.add(n.longValue());
           if (req.get("group") instanceof String g) threads.addAll(recordings.profile(pid(req)).threadsInGroup(g));
           resp.put("flame", recordings.profile(pid(req)).flame(num(req, "t0", 0), num(req, "t1", Long.MAX_VALUE),
-              String.valueOf(req.getOrDefault("kind", "cpu")), threads, 0.002, Boolean.TRUE.equals(req.get("reverse")), names(req, "path")));
+              String.valueOf(req.getOrDefault("kind", "cpu")), threads, 0.002, Boolean.TRUE.equals(req.get("reverse")), names(req, "path"),
+              Boolean.TRUE.equals(req.get("classes"))));
         }
         case "capture_stats" -> resp.put("stats", captures.load(path(req, "path")).stats());
         case "capture_flame" -> {
@@ -107,9 +109,11 @@ public final class Main {
           if (req.get("threads") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) threads.add(n.longValue());
           String kind = String.valueOf(req.getOrDefault("kind", "cpu"));
           boolean reverse = Boolean.TRUE.equals(req.get("reverse"));
+          String detail = String.valueOf(req.getOrDefault("frames", ""));
+          if (!List.of("", "line", "bci").contains(detail)) throw new IllegalArgumentException("frames: '', line or bci");
           resp.put("flame", req.get("base") != null
-              ? Profile.diff(captures.load(path(req, "base")), captures.load(path(req, "path")), kind, reverse, 0.002)
-              : captures.load(path(req, "path")).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse, names(req, "zoom")));
+              ? Profile.diff(captures.load(path(req, "base"), detail), captures.load(path(req, "path"), detail), kind, reverse, 0.002)
+              : captures.load(path(req, "path"), detail).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse, names(req, "zoom"), Boolean.TRUE.equals(req.get("classes"))));
         }
         default -> throw new IllegalArgumentException("unknown op: " + op);
       }
