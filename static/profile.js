@@ -40,7 +40,26 @@ function depthSelect(key, options, title) {
   return `<select class="recscope" title="${esc(title)}" onchange="setSetting('${key}', +this.value)">${options.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o} frames</option>`).join('')}</select>`;
 }
 async function setSetting(key, value) { S.record.settings = await post('/api/settings', { [key]: value }); refresh(); }
-async function setJvmRecord(id, on) { S.record = await post('/api/jvm/record', { id, on }); refresh(); }
+async function setJvmRecord(id, on) {
+  const r = S.record?.jvms; if (r) { r[id] = { ...r[id], live: on, error: null }; renderJvms(); }  // flip at once; the server's answer follows
+  try { S.record = await post('/api/jvm/record', { id, on }); } catch (e) { alert('Record: ' + (e.message || e)); }
+  refresh();
+}
+
+// Per-JVM record buttons in the JVM tables, under a Record all button in the column's header
+const recordable = j => j.label !== 'agentscope helper' && +((/^(?:1\.)?(\d+)/.exec(j.version || '') || [])[1] || 0) >= 14;
+function recToggle(j) {
+  const r = recState().jvms[j.id], live = r?.live, why = DEMO ? 'the demo replays recordings' : S.jvm_helper || (!recordable(j) && 'JFR streaming needs JDK 14+');
+  const title = why || (live ? 'Stop recording this JVM' : r?.error ? `⚠ ${r.error}. Click to try again` : 'Record this JVM (JFR, ≲1% overhead)');
+  return `<button class="recbtn sm icon ${live ? 'on' : ''} ${r?.error && !live && !why ? 'err' : ''}" ${why ? 'disabled' : ''} title="${esc(title)}"
+    onclick="event.stopPropagation();setJvmRecord(${j.id}, ${!live})"><i></i></button>`;
+}
+function recAllToggle() {
+  if (!S.record) return '';
+  const r = recState(), why = DEMO ? 'the demo replays recordings' : S.jvm_helper;
+  return `<button class="recbtn sm ${r.on ? 'on' : ''}" ${why ? 'disabled' : ''} title="${esc(why || (r.on ? 'Stop recording every JVM' : `Record every ${r.scope === 'all' ? '' : 'agent '}JVM, and new ones as they start (scope: in the header)`))}"
+    onclick="event.stopPropagation();toggleRecord()"><i></i>all</button>`;
+}
 
 // The dot on a JVM row
 function recDot(j) {

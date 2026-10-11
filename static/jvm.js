@@ -38,13 +38,17 @@ function jvmSpark(j, i, color, W = 64, H = 16, floor = 0) {
   return `<svg width="${W}" height="${H}" style="vertical-align:middle"><polyline points="${pts.map((p, k) => `${(k / (pts.length - 1) * W).toFixed(1)},${(H - 1 - p[i] / mx * (H - 2)).toFixed(1)}`).join(' ')}" fill="none" stroke="${color}" stroke-width="1.3"/></svg>`;
 }
 
+// A JVM's name opens its full view (the lightbox), wherever it's listed
+const jvmLink = (j, text) => `<a class="jlink" href="#jvm=${j.id}" title="open the full view: profile, captures, snapshots" onclick="event.stopPropagation();openJvmBox(${j.id});return false">${text ?? `<b>${esc(j.label)}</b>`}</a>`;
+
 // inline: rows expand in place (the wide JVMs section); otherwise a click opens the full-size view (the side panel)
 function jvmRows(list, withSession, inline) {
   return list.map(j => {
     const s = j.sid && S.sMap[j.sid], open = inline && openJvms.has(j.id);
     const who = withSession ? `<td class="who">${s ? `<a href="#" onclick="event.stopPropagation();openDrawer('${s.sid}');return false" style="text-decoration:none"><span class="lane-chip">${esc(s.lane)}</span> ${esc(s.title)}</a>${j.how && j.how !== 'tree' ? ` <span class="sub" title="attributed by ${esc(j.how)}">⌁</span>` : ''}` : '<span class="dim">no session</span>'}</td>` : '';
     return `<tr class="jr ${open ? 'open' : ''}" onclick="${inline ? 'toggleJvm' : 'openJvmBox'}(${j.id})" title="${esc(j.main || '')}">
-      <td><b>${esc(j.label)}</b> <span class="sub">${j.pid}</span> ${recDot(j)}<div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div>${activityLine(j) ? `<div class="jact">${activityLine(j, 2)}</div>` : ''}</td>${who}
+      <td class="rec">${recToggle(j)}</td>
+      <td>${jvmLink(j)} <span class="sub">${j.pid}</span><div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div>${activityLine(j) ? `<div class="jact">${activityLine(j, 2)}</div>` : ''}</td>${who}
       <td class="num">${uptime(j.start)}</td>
       <td class="num">${cores(j.cpu)} ${jvmSpark(j, 1, 'var(--s1)', 56, 16, 100)}</td>
       <td>${heapBar(j)} <span class="sub">${mb(j.heap_used)} / ${mb(j.heap_max)}</span></td>
@@ -54,11 +58,11 @@ function jvmRows(list, withSession, inline) {
       <td class="num">${(j.classes / 1000).toFixed(0)}k</td>
       <td>${jvmFlags(j)}</td>
       <td class="exp"><button class="ibtn" title="open full size" onclick="event.stopPropagation();openJvmBox(${j.id})">⤢</button></td></tr>` +
-      (open ? `<tr class="jd"><td colspan="${withSession ? 11 : 10}">${jvmDetail(j)}</td></tr>` : '');
+      (open ? `<tr class="jd"><td colspan="${withSession ? 12 : 11}">${jvmDetail(j)}</td></tr>` : '');
   }).join('');
 }
 function jvmTable(list, withSession, inline = true) {
-  return `<table class="jt"><tr><th>JVM</th>${withSession ? '<th>session</th>' : ''}<th class="num">up</th><th class="num">CPU (cores)</th><th>heap used / max</th><th class="num" title="share of wall time in GC pauses">GC</th><th class="num" title="estimated from eden turnover">alloc ≈</th><th class="num">threads</th><th class="num">classes</th><th></th><th></th></tr>${jvmRows(list, withSession, inline)}</table>`;
+  return `<table class="jt"><tr><th class="rec">${recAllToggle()}</th><th>JVM</th>${withSession ? '<th>session</th>' : ''}<th class="num">up</th><th class="num">CPU (cores)</th><th>heap used / max</th><th class="num" title="share of wall time in GC pauses">GC</th><th class="num" title="estimated from eden turnover">alloc ≈</th><th class="num">threads</th><th class="num">classes</th><th></th><th></th></tr>${jvmRows(list, withSession, inline)}</table>`;
 }
 
 function jvmDetail(j, wide) {
@@ -180,7 +184,7 @@ document.addEventListener('keydown', e => {
 // One line per JVM on a session card; only JVMs worth mentioning.
 function jvmLine(s) {
   const js = jvmSorted((S.jvms || []).filter(j => j.sid === s.sid)).filter(j => j.flags.length || j.cpu >= 5 || j.heap_used >= 200e6).slice(0, 2);
-  return js.map(j => `<div class="jline"><span>☕ ${esc(j.label)}</span>${heapBar(j, 60)}<span>${mb(j.heap_used)} / ${mb(j.heap_max)}</span>${j.gc_pct ? `<span>GC ${pct(j.gc_pct)}</span>` : ''}${jvmFlags(j)}</div>` +
+  return js.map(j => `<div class="jline"><span>${jvmLink(j, '☕ ' + esc(j.label))}</span>${heapBar(j, 60)}<span>${mb(j.heap_used)} / ${mb(j.heap_max)}</span>${j.gc_pct ? `<span>GC ${pct(j.gc_pct)}</span>` : ''}${jvmFlags(j)}</div>` +
     (activityLine(j) ? `<div class="jline jact">${recDot(j)} ${activityLine(j)}</div>` : '')).join('');
 }
 function jvmDrawer(s) {
@@ -190,8 +194,8 @@ function jvmDrawer(s) {
 function jvmEndsGroup() {
   const items = jvmSorted((S.jvms || []).filter(j => j.flags.length && jvmVisible(j))).map(j => {
     const s = j.sid && S.sMap[j.sid];
-    return `<div class="item" onclick="${s ? `openDrawer('${s.sid}')` : `document.getElementById('sec-jvms').scrollIntoView()`}"><div class="a"><span>☕</span>${s ? `<span class="lane-chip">${esc(s.lane)}</span>` : ''}<span class="x">${esc(j.label)} <span class="when">${j.pid}</span></span>${jvmFlags(j)}</div>` +
-      `<div class="b">${j.flags.map(f => esc(JVM_FLAGS[f][2])).join(' · ')}${s ? ' · session: ' + esc(s.title) : ' · no session'}</div></div>`;
+    return `<div class="item" onclick="openJvmBox(${j.id})"><div class="a"><span>☕</span>${s ? `<span class="lane-chip">${esc(s.lane)}</span>` : ''}<span class="x">${esc(j.label)} <span class="when">${j.pid}</span></span>${jvmFlags(j)}</div>` +
+      `<div class="b">${j.flags.map(f => esc(JVM_FLAGS[f][2])).join(' · ')}${s ? ` · session: <a href="#" onclick="event.stopPropagation();openDrawer('${s.sid}');return false">${esc(s.title)}</a>` : ' · no session'}</div></div>`;
   });
   return ['☕ JVMs in trouble', items];
 }
