@@ -59,6 +59,14 @@ function renderCaptures(jvmId) {
   if (DEMO) { patch(el, ''); return; }
   if (!S.asprof) { patch(el, `<div class="profh"><b>Captures</b><span class="sub">Install async-profiler (<code>brew install async-profiler</code>) for wall-clock, native-memory and allocation captures.</span></div>`); return; }
   const rows = capLists[jvmId]?.rows || [], running = rows.find(r => r.status === 'running');
+  if (!(S.jvms || []).some(j => j.id === jvmId)) {  // exited: its captures, nothing new
+    const open = Object.keys(prof).find(k => k.startsWith('cap') && prof[k].jvm === jvmId && prof[k].shown), p = open && prof[open];
+    patch(el, `<div class="profh"><b>Captures</b><span class="sub">${rows.length ? 'taken while this JVM ran' : 'none taken while this JVM ran'}</span></div>
+      ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
+      ${p ? `<div class="profc"><div class="fg" id="fg-${open}"></div></div>` : ''}`);
+    if (p) drawFlame(open);
+    return;
+  }
   const open = Object.keys(prof).find(k => k.startsWith('cap') && prof[k].jvm === jvmId && prof[k].shown);
   const p = open && prof[open];
   const sum = capOptsSummary(capOpts());
@@ -116,4 +124,34 @@ async function loadCapFlame(key, quiet) {
   try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}&frames=${p.frames || ''}&classes=${showClasses(p) ? 1 : 0}&categories=${capCategories(p) ? 1 : 0}${zq(p)}`); p.error = null; }
   catch (e) { p.error = String(e.message || e); p.flame = null; Flame.busy(key, false); }
   renderCaptures(p.jvm);
+}
+
+// ---------------------------------------------------------------- every JVM's captures, on the main page
+// Captures outlive their JVM (30 days, like the jvm table): this is how to find one whose JVM has exited.
+let allCaps = { t: 0, rows: [] };
+async function loadAllCaps() {
+  if (Date.now() - allCaps.t < 15000 || allCaps.busy || folded('jvmcaps')) return;
+  allCaps.busy = true;
+  try { allCaps = { t: Date.now(), rows: await api('/api/captures') }; } catch (e) { allCaps = { t: Date.now(), rows: allCaps.rows }; }
+  renderCapsPanel();
+}
+function openCapture(jvmId, cid) { setHash({ cap: cid }); openJvmBox(jvmId); }
+function renderCapsPanel() {
+  const el = $('#jvmcaps'); if (!el) return;
+  if (DEMO || !S.asprof) { el.hidden = true; return; }
+  loadAllCaps();
+  const rows = allCaps.rows.filter(r => r.status !== 'failed');
+  el.hidden = !rows.length;
+  if (!rows.length) return;
+  const alive = new Set((S.jvms || []).map(j => j.id));
+  patch(el, `<div class="profh"><b>Captures</b><span class="sub">async-profiler captures of every JVM, the last 30 days · click one to open it</span></div>
+    <div class="panel"><table class="jt caps">${rows.map(r => {
+      const s = r.sid && S.sMap[r.sid], when = new Date(r.started * 1000);
+      return `<tr class="jr" onclick="openCapture(${r.jvm_id}, ${r.id})"><td class="sub">${when.toLocaleDateString([], { weekday: 'short' })} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+        <td><b>${esc(r.jvm_label || 'JVM')}</b> <span class="sub">${r.pid}</span> ${alive.has(r.jvm_id) ? '' : '<span class="jflag gone">exited</span>'}</td>
+        <td class="who">${s ? `<span class="lane-chip">${esc(s.lane)}</span> ${esc(s.title)}` : '<span class="dim">no session</span>'}</td>
+        <td>${esc(r.mode_label)} <span class="sub">${r.seconds} s${capOptsSummary(r.opts || {}) ? ' · ' + esc(capOptsSummary(r.opts)) : ''}</span></td>
+        <td class="sub">${r.status === 'running' ? 'running…' : Object.keys(r.kinds || {}).map(k => esc(KIND_LABEL[k] || k)).join(', ')}</td>
+        <td class="num sub">${r.bytes ? mb(r.bytes) : ''}</td></tr>`;
+    }).join('')}</table></div>`);
 }

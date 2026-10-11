@@ -9,7 +9,7 @@ const JVM_FLAGS = {
 const openJvms = new Set();
 const jvmHistCache = {};  // id -> {key, rows}
 
-const mb = b => b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.round(b / 1e6) + ' MB';
+const mb = b => b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 || !b ? Math.round(b / 1e6) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 const pct = v => v == null ? '–' : v < 1 && v > 0 ? '<1%' : Math.round(v) + '%';
 const rate = b => b == null ? '–' : b < 1e6 ? '<1 MB/s' : b < 1e9 ? Math.round(b / 1e6) + ' MB/s' : (b / 1e9).toFixed(1) + ' GB/s';
 const uptime = t => { const d = S.now - t; return d < 3600 ? Math.round(d / 60) + 'm' : d < 86400 ? (d / 3600).toFixed(d < 36000 ? 1 : 0) + 'h' : (d / 86400).toFixed(1) + 'd'; };
@@ -130,6 +130,7 @@ function renderJvms() {
   patch($('#jvms'), list.length ? jvmTable(list, true) : `<div class="empty" style="padding:10px 12px">${all.length ? 'no JVMs match the filter' : 'no JVMs running (or none publishing perf data)'}</div>`);
   for (const id of openJvms) if (!jvmHistCache[id]) loadJvmHist(id);
   renderJvmBox();
+  renderCapsPanel();
   renderActivity();
   loadActivity();
   renderAllFlame();
@@ -159,8 +160,8 @@ function renderJvmBox() {
   document.body.classList.toggle('jbox-open', boxId != null);
   if (boxId == null) return;
   const body = box.querySelector('.jbox-main');
-  // a JVM that exited can still have a recorded profile worth looking at
-  if (!j) { patch(body, '<div class="empty">this JVM is no longer running</div>'); patch(box.querySelector('.jbox-detail'), ''); return; }
+  // a JVM that exited still has its captures, and its recorded profile while the helper holds it
+  if (!j) { renderExitedBox(box, boxId); return; }
   const s = j.sid && S.sMap[j.sid];
   patch(body, `<div class="jbox-head"><h2>☕ ${esc(j.label)} <span class="sub">${j.pid}</span></h2>
       <div class="row">${s ? `<a href="#" class="lane-chip" onclick="closeJvmBox();openDrawer('${s.sid}');return false">${esc(s.lane)} · ${esc(s.title)}</a>` : '<span class="dim">no session</span>'}
@@ -175,6 +176,27 @@ function renderJvmBox() {
   renderCaptures(j.id);
   loadCaptures(j.id);
 }
+// What the jvm table remembers of a JVM that has exited (it outlives the JVM by 30 days, as its captures do)
+const exitedInfo = {};  // id -> {info} or {error}, fetched once
+async function renderExitedBox(box, id) {
+  const body = box.querySelector('.jbox-main');
+  const e = exitedInfo[id] ||= { loading: api(`/api/jvm/info?id=${id}`).then(i => { exitedInfo[id] = { info: i }; if (boxId === id) renderJvmBox(); },
+    err => { exitedInfo[id] = { error: String(err.message || err) }; if (boxId === id) renderJvmBox(); }) };
+  if (!e.info) { patch(body, `<div class="empty">${e.error ? 'this JVM is no longer running' : 'loading…'}</div>`); patch(box.querySelector('.jbox-prof'), ''); patch(box.querySelector('.jbox-detail'), ''); renderCaptures(id); loadCaptures(id); return; }
+  const i = e.info, s = i.sid && S.sMap[i.sid];
+  // an exited JVM, shaped enough like a live one for the profile section
+  const j = { id: i.id, pid: i.pid, label: i.label, version: i.version || '', gc: i.gc, start: i.start, exited: i.last };
+  patch(body, `<div class="jbox-head"><h2>☕ ${esc(i.label)} <span class="sub">${i.pid}</span> <span class="jflag gone">exited</span></h2>
+      <div class="row">${s ? `<a href="#" class="lane-chip" onclick="closeJvmBox();openDrawer('${s.sid}');return false">${esc(s.lane)} · ${esc(s.title)}</a>` : '<span class="dim">no session</span>'}
+        <span class="sub">${esc(i.version || '')} · ${esc(i.gc || '?')} · ran ${new Date(i.start * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} – ${new Date(i.last * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</span></div></div>`);
+  const r = recState().jvms[id];
+  patch(box.querySelector('.jbox-prof'), r?.since ? profileSection(j) : '');
+  patch(box.querySelector('.jbox-detail'), `<div class="profh"><b>Details</b></div><div><pre title="main class and JVM options">${esc(i.main || '')}\n${esc(i.args || '')}</pre></div>`);
+  if (r?.since && !folded('jbox-prof')) loadProfile(id);
+  renderCaptures(id);
+  loadCaptures(id);
+}
+
 // Esc closes the full-size view before anything else (the side panel's own Esc handler runs later, in bubbling order)
 // …unless a flame graph inside it has something of its own to close (its search, menu or help)
 document.addEventListener('keydown', e => {

@@ -1130,6 +1130,12 @@ def serve(port):
                 elif path == "/api/activity":
                     w = int(q.get("window", 300))
                     self._send(200, json.dumps(sampler.recorder.thread_activity(w, 150 if w <= 600 else 180)), "application/json")
+                elif path == "/api/jvm/info":  # a JVM by id, running or long gone: what its full view shows once it has exited
+                    with db() as c:
+                        r = c.execute("SELECT id, pid, start_t, label, main, version, gc, args, sid, last_t FROM jvm WHERE id = ?", (int(q.get("id", 0)),)).fetchone()
+                    if not r:
+                        raise ValueError("no such JVM")
+                    self._send(200, json.dumps(dict(zip(("id", "pid", "start", "label", "main", "version", "gc", "args", "sid", "last"), r))), "application/json")
                 elif path == "/api/captures":
                     self._send(200, json.dumps(_captures.list(int(q["jvm"]) if q.get("jvm") else None)), "application/json")
                 elif path == "/api/capture/flame":

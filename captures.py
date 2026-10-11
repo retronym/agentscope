@@ -141,15 +141,18 @@ class Captures:
         p.send_signal(signal.SIGTERM)
 
     def list(self, jvm_id=None, limit=50):
-        q = "SELECT id, jvm_id, pid, mode, seconds, started, finished, status, error, bytes, kinds, opts FROM capture"
+        """Newest first, with the JVM's label and session (from the jvm table: it outlives the JVM, so do its captures)."""
+        q = ("SELECT c.id, c.jvm_id, c.pid, c.mode, c.seconds, c.started, c.finished, c.status, c.error, c.bytes, c.kinds, c.opts, j.label, j.sid"
+             " FROM capture c LEFT JOIN jvm j ON j.id = c.jvm_id")
         args = ()
         if jvm_id is not None:
-            q += " WHERE jvm_id = ?"
+            q += " WHERE c.jvm_id = ?"
             args = (jvm_id,)
         with self.db() as c:
-            rows = c.execute(q + " ORDER BY started DESC LIMIT ?", (*args, limit)).fetchall()
+            rows = c.execute(q + " ORDER BY c.started DESC LIMIT ?", (*args, limit)).fetchall()
         return [dict(id=r[0], jvm_id=r[1], pid=r[2], mode=r[3], mode_label=MODES.get(r[3], (r[3],))[0], seconds=r[4], started=r[5], finished=r[6],
-                     status=r[7], error=r[8], bytes=r[9], kinds=json.loads(r[10]) if r[10] else {}, opts=json.loads(r[11]) if r[11] else {}) for r in rows]
+                     status=r[7], error=r[8], bytes=r[9], kinds=json.loads(r[10]) if r[10] else {}, opts=json.loads(r[11]) if r[11] else {},
+                     jvm_label=r[12], sid=r[13]) for r in rows]
 
     def path(self, cid):
         with self.db() as c:

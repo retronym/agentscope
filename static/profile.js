@@ -78,7 +78,7 @@ const LABEL_W = 210, ROW_H = 13, HEAT_H = 80, FLAME_ROW = 17;
 function profileSection(j) {
   const r = recState().jvms[j.id], p = prof[j.id] ||= { kind: 'cpu', window: 300, zoom: [] };
   const recording = r?.live, has = r && (r.live || r.since);
-  const toggle = DEMO ? '' : `<button class="btn-link" onclick="setJvmRecord(${j.id}, ${!recording})" ${S.jvm_helper ? 'disabled' : ''}>${recording ? '■ Stop recording this JVM' : '● Record this JVM'}</button>`;
+  const toggle = DEMO || j.exited ? '' : `<button class="btn-link" onclick="setJvmRecord(${j.id}, ${!recording})" ${S.jvm_helper ? 'disabled' : ''}>${recording ? '■ Stop recording this JVM' : '● Record this JVM'}</button>`;
   if (!has) return `<div class="profh"><b>Profile</b>${toggle}<span class="sub">${r?.error ? '⚠ ' + esc(r.error) : 'Not recorded. Press Record in the header, or record just this JVM.'}</span></div>`;
   return `<div class="profh"><b>Profile</b>${recording ? '<span class="recdot"></span>' : '<span class="sub">stopped</span>'}${toggle}
       <span class="seg">${PKINDS.map(([k, l]) => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf(${j.id}, {kind:'${k}', zoom: []})">${l}</button>`).join('')}</span>
