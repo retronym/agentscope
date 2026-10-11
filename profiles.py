@@ -7,11 +7,13 @@ Stored losslessly, the way JFR itself keeps them small: constant pools plus comp
   - tgroup: thread groups (names with their numbering wildcarded).
   - sample_blob: per JVM, minute and kind, one zlib-compressed run of varints: (thread group, node delta, weight)...
 A machine-wide flame graph for any range is then a decode and a walk up the tree: session → JVM → activity → frames.
+Queries walk an in-memory copy of the pool's parent and frame links (two int arrays, 8 bytes a node), loaded once and
+kept current by the writes; a SQL walk of the ancestors of every sampled stack took seconds per query.
 
 Minutes older than RETENTION_DAYS are dropped hourly; once a day, gc() then drops the pool rows that no remaining minute
 references (deep stacks make the prefix tree the bulk of the bytes, so it must not outlive the minutes that use it).
 """
-import collections, sqlite3, threading, time, zlib
+import array, collections, sqlite3, threading, time, zlib
 
 RETENTION_DAYS = 7
 GC_EVERY = 86400  # seconds between pool sweeps; the first prune after a start sweeps too
@@ -29,14 +31,47 @@ _lock = threading.Lock()
 _frames, _nodes, _groups = {}, {}, {}  # name -> id; (parent, frame) -> id; name -> id
 _helper_stacks = {}  # (helper gen, pid, helper stack id) -> node id: what this process has already interned
 _epoch = 0  # bumped whenever the caches are dropped, so a store_minute that looked at them before can tell
+_pool = None  # Pool: the node and frame tables in memory, for queries; None until a query wants it
 _gc_at = 0
 
 
 def _forget():
-    global _epoch
+    global _epoch, _pool
     for cache in (_frames, _nodes, _groups, _helper_stacks):
         cache.clear()
+    _pool = None
     _epoch += 1
+
+
+class Pool:
+    """The stack pool for queries: parent[id] and frame[id] of every node, and frame names. Loaded under _lock, then
+    kept current by _node and _store (which hold it too), and dropped by _forget (a sweep, or a rolled-back write)."""
+
+    def __init__(self, c):
+        top = c.execute("SELECT MAX(id) FROM node").fetchone()[0] or 0
+        self.parent, self.frame = array.array("i", bytes(4 * (top + 1))), array.array("i", bytes(4 * (top + 1)))
+        for i, p, f in c.execute("SELECT id, parent, frame FROM node"):
+            self.parent[i], self.frame[i] = p, f
+        self.names = dict(c.execute("SELECT id, name FROM frame"))
+
+    def add(self, i, parent, frame):
+        if i >= len(self.parent):
+            grow = array.array("i", bytes(4 * (i + 1 - len(self.parent))))
+            self.parent.extend(grow)
+            self.frame.extend(grow)
+        self.parent[i], self.frame[i] = parent, frame
+
+
+def pool(db):
+    global _pool
+    p = _pool
+    if p is None:
+        with _lock:
+            if _pool is None:
+                with db() as c:
+                    _pool = Pool(c)
+            p = _pool
+    return p
 
 
 def prune(c, now):
@@ -159,6 +194,8 @@ def _node(c, parent, frame):
     if i is None:
         c.execute("INSERT OR IGNORE INTO node (parent, frame) VALUES (?, ?)", k)
         i = _nodes[k] = c.execute("SELECT id FROM node WHERE parent = ? AND frame = ?", k).fetchone()[0]
+        if _pool is not None:
+            _pool.add(i, parent, frame)
     return i
 
 
@@ -184,6 +221,8 @@ def store_minute(db, helper, gen, pid, jvm_id, t):
 def _store(db, gen, pid, jvm_id, t, m, defs):
     with db() as c:
         fids = [_id(c, _frames, "frame", n) for n in defs["frames"]]
+        if _pool is not None:
+            _pool.names.update(zip(fids, defs["frames"]))
         for sid, path, activity in defs["stacks"]:
             node = 0
             for k in path:
@@ -204,30 +243,14 @@ def _store(db, gen, pid, jvm_id, t, m, defs):
 
 # ---------------------------------------------------------------------------------------------- queries
 
-def _paths(c, leaves):
-    """node id -> ([frame names root first], activity), loading just the ancestors needed."""
-    if not leaves:
-        return {}
-    c.execute("CREATE TEMP TABLE IF NOT EXISTS want (id INTEGER PRIMARY KEY)")
-    c.execute("DELETE FROM want")
-    c.executemany("INSERT OR IGNORE INTO want VALUES (?)", [(x,) for x in leaves])
-    rows = c.execute("""WITH RECURSIVE anc(id) AS (SELECT id FROM want UNION SELECT n.parent FROM node n JOIN anc ON n.id = anc.id WHERE n.parent > 0)
-                        SELECT n.id, n.parent, f.name, n.activity FROM node n JOIN anc ON n.id = anc.id JOIN frame f ON f.id = n.frame""").fetchall()
-    nodes = {i: (p, name, act) for i, p, name, act in rows}
-    memo = {0: []}
-
-    def path(i):
-        if i not in memo:
-            p, name, _ = nodes[i]
-            memo[i] = path(p) + [name]
-        return memo[i]
-    return {leaf: (path(leaf), nodes[leaf][2] if leaf in nodes else None) for leaf in leaves if leaf in nodes or leaf == 0}
-
-
 def flame(db, t0, t1, kind="cpu", reverse=False, labels=None, min_share=0.002, path=()):
     """[name, value, children] over every recorded JVM in [t0, t1): session → JVM → activity → frames (or reversed).
     labels(jvm_id) -> (session label, JVM label). Nodes under min_share of the total are left out, except along and
-    below `path` (the page's zoom), where the share is of the zoomed subtree: detail appears as you zoom in."""
+    below `path` (the page's zoom), where the share is of the zoomed subtree: detail appears as you zoom in.
+    The tree is built lazily, so the cost follows what's kept, not every frame of every sampled stack: top-down sums
+    weights up the prefix tree (a parent's id is below its children's, so one pass in descending ids), reversed walks
+    cursors up from the sampled nodes, a level at a time, only below nodes that made the cut."""
+    P = pool(db)
     acc = collections.Counter()
     with db() as c:
         c.execute("BEGIN")  # one snapshot for the blobs and the tree they reference, should a gc() commit in between
@@ -236,41 +259,92 @@ def flame(db, t0, t1, kind="cpu", reverse=False, labels=None, min_share=0.002, p
         for jvm_id, data in blobs:
             for _, node, w in decode(data):
                 acc[(jvm_id, node)] += w
-        paths = _paths(c, {node for _, node in acc})
-    root = [None, 0, {}]
-    total = 0
+        acts = _activities(c, {node for _, node in acc})
+    n_nodes = len(P.parent)
+    groups = collections.defaultdict(collections.Counter)  # (session, JVM, activity) -> {sampled node: weight}
     for (jvm_id, node), w in acc.items():
-        frames, activity = paths.get(node, ([], None))
         sess, jl = labels(jvm_id) if labels else ("?", str(jvm_id))
-        # the first three levels are ours, not frames: marked, so the page can draw them as labels
-        path = [(sess, 1), (jl, 1), (activity or "?", 1)] + [(f, 0) for f in frames]
-        if reverse:
-            path.reverse()
-        total += w
-        n = root
-        n[1] += w
-        for name, meta in path:
-            n = n[2].setdefault((name, meta), [name, 0, {}, meta])
-            n[1] += w
+        groups[(sess, jl, acts.get(node) or "?")][node if 0 <= node < n_nodes else 0] += w
+    total = sum(acc.values())
+    name = lambda n: P.names.get(P.frame[n], "?")
 
-    at, node = total, root
+    if reverse:
+        def kids(h):  # h: [(group, node, stage, weight)]; stage 0 walks frames, then activity, JVM, session
+            by = {}
+            for g, n, st, w in h:
+                if st == 0 and n:
+                    key, nxt = (name(n), 0), (g, P.parent[n], 0)
+                elif st < 3:
+                    key, nxt = (g[2 - st], 1), (g, 0, st + 1)
+                else:
+                    continue
+                v = by.setdefault(key, [0, {}])
+                v[0] += w
+                v[1][nxt] = v[1].get(nxt, 0) + w
+            return [(k[0], k[1], v, [(*x, w) for x, w in m.items()]) for k, (v, m) in by.items()]
+        root = [(g, n, 0, w) for g, ws in groups.items() for n, w in ws.items()]
+    else:
+        tots, frame_kids = {}, {}  # group -> {node: subtree weight}; group -> {node: [child nodes]}, built on demand
+
+        def subtree(g):
+            if g not in tots:
+                tot, par = collections.Counter(groups[g]), P.parent
+                seen = set()
+                for n in groups[g]:
+                    while n and n not in seen:
+                        seen.add(n)
+                        n = par[n]
+                for n in sorted(seen, reverse=True):
+                    if par[n]:
+                        tot[par[n]] += tot[n]
+                ks = collections.defaultdict(list)
+                for n in seen:
+                    ks[par[n]].append(n)
+                tots[g], frame_kids[g] = tot, ks
+            return tots[g], frame_kids[g]
+
+        def kids(h):  # h: ('label', depth, prefix) for the first three levels, ('frame', group, node) below
+            if h[0] == "frame":
+                tot, ks = subtree(h[1])
+                return [(name(n), 0, tot[n], ("frame", h[1], n)) for n in ks.get(h[2], ())]
+            _, d, prefix = h
+            if d == 3:
+                return kids(("frame", prefix, 0))
+            by = collections.Counter()
+            for g, ws in groups.items():
+                if g[:d] == prefix:
+                    by[g[d]] += sum(ws.values())
+            return [(k, 1, v, ("label", d + 1, prefix + (k,))) for k, v in by.items()]
+        root = ("label", 0, ())
+
+    # the zoom root's weight, for the threshold along and below it
+    at, h = total, root
     for p in path:
-        node = next((k for k in node[2].values() if k[0] == p), None)
-        if node is None:
+        k = next((k for k in kids(h) if k[0] == p), None)
+        if k is None:
             at = total
             break
-        at = node[1]
+        at, h = k[2], k[3]
     lo, lo_path = max(1, total * min_share), max(1, at * min_share)
 
-    def out(n, name, depth=0, inside=not path):
-        kids = []
-        for k in sorted(n[2].values(), key=lambda k: -k[1]):
+    def out(h, nm, value, meta, depth=0, inside=not path):
+        children = []
+        for k in sorted(kids(h), key=lambda k: -k[2]):
             on = not inside and depth < len(path) and k[0] == path[depth]
-            if k[1] >= (lo_path if inside or on else lo):
-                kids.append(out(k, k[0], depth + 1, inside or (on and depth + 1 == len(path))))
-        return [name, n[1], kids] + ([1] if len(n) > 3 and n[3] else [])
+            if k[2] >= (lo_path if inside or on else lo):
+                children.append(out(k[3], k[0], k[2], k[1], depth + 1, inside or (on and depth + 1 == len(path))))
+        return [nm, value, children] + ([1] if meta else [])
 
-    return dict(kind=kind, reverse=reverse, total=total, t0=t0, t1=t1, first=span[0], last=span[1], minutes=span[2], bytes=span[3] or 0, root=out(root, "all"))
+    return dict(kind=kind, reverse=reverse, total=total, t0=t0, t1=t1, first=span[0], last=span[1], minutes=span[2], bytes=span[3] or 0,
+                root=out(root, "all", total, 0))
+
+
+def _activities(c, nodes):
+    """node id -> activity, for the sampled nodes (a node that ends a stack carries its activity)."""
+    c.execute("CREATE TEMP TABLE IF NOT EXISTS want (id INTEGER PRIMARY KEY)")
+    c.execute("DELETE FROM want")
+    c.executemany("INSERT OR IGNORE INTO want VALUES (?)", [(x,) for x in nodes])
+    return dict(c.execute("SELECT n.id, n.activity FROM node n JOIN want USING (id) WHERE n.activity IS NOT NULL"))
 
 
 def storage(db):

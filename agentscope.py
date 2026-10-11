@@ -19,7 +19,7 @@ group, and per-minute samples of each non-trivial process (what ran, under which
 Usage: python3 agentscope.py [--port 8377]   then open http://localhost:8377
        AGENTSCOPE_SYSTEM_HINTS="MyAntivirus:mdm-agent" python3 agentscope.py   # extra "system / security" processes
 """
-import argparse, atexit, collections, glob, json, os, re, signal, sqlite3, subprocess, sys, threading, time, traceback
+import argparse, atexit, collections, faulthandler, glob, json, os, re, signal, sqlite3, subprocess, sys, threading, time, traceback
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
@@ -1200,6 +1200,7 @@ if __name__ == "__main__":
     ap.add_argument("--claude-dir", action="append", metavar="DIR",
                     help="a Claude Code config dir to read (repeatable); default: ~/.claude, $CLAUDE_CONFIG_DIR, and ~/.claude-* siblings")
     a = ap.parse_args()
+    faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1 <pid>: every thread's stack to the log, to see what's busy
     configure_claude_dirs(a.claude_dir)
     if a.db:
         DB_FILE = os.path.abspath(a.db)

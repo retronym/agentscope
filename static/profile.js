@@ -26,7 +26,13 @@ async function post(url, body) {
   if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
   return j;
 }
-async function setRecord(on, scope) { S.record = await post('/api/record', { on, scope }); renderRecord(); refresh(); }
+// The button flips at once; the server's answer (and the JVMs it starts recording) follow
+async function setRecord(on, scope) {
+  if (S.record && !S.record.on && on) S.record.since = nowSec();
+  Object.assign(S.record || {}, { on, scope }); renderRecord();
+  try { S.record = await post('/api/record', { on, scope }); } catch (e) { alert('Record: ' + (e.message || e)); }
+  renderRecord(); refresh();
+}
 function toggleRecord() { setRecord(!recState().on, recState().scope); }
 function depthSelect(key, options, title) {
   const v = S.record?.settings?.[key];
@@ -72,20 +78,24 @@ function setProf(id, patch_) {
 }
 
 // Called on every render of the full view: refetch at most every few seconds, flame when the question changed.
-async function loadProfile(id, force) {
+// A forced load is the user changing the question (kind, reverse, thread, range): the flame graph says it's loading.
+// Zooming refetches quietly, for detail below the zoom: the graph already shows what it has.
+async function loadProfile(id, force, quiet) {
   const p = prof[id], r = recState().jvms[id];
-  if (!p || !r || p.busy) { drawProfile(id); return; }
+  if (!p || !r) { drawProfile(id); return; }
+  if (p.busy) { if (force) p.again = { quiet }; drawProfile(id); return; }  // the newest question wins, once this one is in
   if (!force && p.fetched && Date.now() - p.fetched < 4000) { drawProfile(id); return; }
   p.busy = true;
+  if (force && !quiet) Flame.busy(id, true);
   try {
-    const since = nowSec() - p.window;
-    p.summary = await api(`/api/jvm/summary?id=${id}&since=${since}&bins=${Math.min(300, p.window)}`);
-    const [t0, t1] = p.sel || [since, nowSec() + 5];
-    p.flame = await api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}${zq(p)}`);
-    p.error = null;
-  } catch (e) { p.error = String(e.message || e); }
+    const since = nowSec() - p.window, [t0, t1] = p.sel || [since, nowSec() + 5];
+    const [summary, flame] = await Promise.all([api(`/api/jvm/summary?id=${id}&since=${since}&bins=${Math.min(300, p.window)}`),
+      api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}${zq(p)}`)]);
+    Object.assign(p, { summary, flame, error: null });
+  } catch (e) { p.error = String(e.message || e); Flame.busy(id, false); }
   p.busy = false; p.fetched = Date.now();
   drawProfile(id);
+  if (p.again) { const a = p.again; p.again = null; loadProfile(id, true, a.quiet); }
 }
 
 function canvasFor(id, prefix, h) {
@@ -223,7 +233,7 @@ function drawFlame(id) {
     : p.sel ? 'selected range' : 'whole window';
   const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · ${p.thread.group ? 'threads' : 'thread'} ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total)) : 'no samples'}</span>`;
   Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),
-    onZoom: path => { p.zpath = path; p.load ? p.load() : id === 'all' ? loadAllFlame(true) : loadProfile(id, true); } });
+    onZoom: path => { p.zpath = path; p.load ? p.load(true) : id === 'all' ? loadAllFlame(true, true) : loadProfile(id, true, true); } });
 }
 const shortName = n => n.replace(/^([a-z_$][\w$]*\.)+(?=[A-Z_$][\w$]*[.$])/, m => m.split('.').filter(Boolean).map(x => x[0]).join('.') + '.');
 function frameColor(name, dark) {
@@ -250,16 +260,19 @@ function renderAllFlame() {
     <div class="profc"><div class="fg" id="fg-all"></div></div>`);
   loadAllFlame();
 }
-async function loadAllFlame(force) {
+async function loadAllFlame(force, quiet) {
   const p = prof.all;
-  if (p.busy || (!force && p.fetched && Date.now() - p.fetched < 30000)) { drawFlame('all'); return; }
+  if (p.busy) { if (force) p.again = { quiet }; drawFlame('all'); return; }
+  if (!force && p.fetched && Date.now() - p.fetched < 30000) { drawFlame('all'); return; }
   p.busy = true;
+  if (force && !quiet) Flame.busy('all', true);
   // a range brushed on the Activity lanes, or the last N; stored per minute, so widen to whole minutes
   const [t0, t1] = p.abs ? [Math.floor(p.abs[0] / 60) * 60, Math.ceil(p.abs[1] / 60) * 60] : [nowSec() - p.range, nowSec() + 60];
   try { p.flame = await api(`/api/jvms/flame?t0=${t0}&t1=${t1}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${zq(p)}`); p.error = null; }
-  catch (e) { p.error = String(e.message || e); }
+  catch (e) { p.error = String(e.message || e); Flame.busy('all', false); }
   p.busy = false; p.fetched = Date.now();
   drawFlame('all');
+  if (p.again) { const a = p.again; p.again = null; loadAllFlame(true, a.quiet); }
 }
 // What a recorded JVM is doing, from the last 30 seconds of samples
 function activityLine(j, n = 3) {

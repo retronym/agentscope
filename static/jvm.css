@@ -145,6 +145,11 @@ table.jt.caps .btn-link.on { border-color: var(--accent); color: var(--ink); }
 .fg-op b { font-weight: 600; }
 .fg-crumbs a { cursor: pointer; color: var(--s1); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fg .flamewrap { position: relative; }
+.fg-busy { display: none; position: sticky; top: 8px; z-index: 3; width: max-content; margin: 0 auto -26px; padding: 3px 12px; font-size: 12px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.fg-busy i { display: inline-block; width: 11px; height: 11px; margin-right: 6px; vertical-align: -1px; border: 2px solid var(--axis); border-top-color: var(--accent); border-radius: 50%; animation: fgspin .7s linear infinite; }
+.fg-loading .fg-busy { display: block; }
+.fg-loading canvas { opacity: .35; transition: opacity .12s; }
+@keyframes fgspin { to { transform: rotate(360deg); } }
 .fg canvas { display: block; width: 100%; }
 .fg-sel { position: absolute; display: none; background: color-mix(in srgb, var(--accent) 22%, transparent); border: 1px solid var(--accent); pointer-events: none; }
 .fg-pop { position: absolute; right: 0; top: 34px; z-index: 5; background: var(--surface); border: 1px solid var(--axis); border-radius: 10px; padding: 10px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 12px; max-width: 520px; }

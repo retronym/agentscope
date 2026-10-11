@@ -114,9 +114,10 @@ const Flame = (() => {
   function show(key, el, data, opts) {
     const v = view(key);
     v.opts = opts;
-    if (v.data !== data) { v.data = data; v.base = fromArr(data.root); v.diff = !!data.diff; v.total = data.total; v.beforeTotal = data.before_total; apply(v); }
+    if (v.data !== data) { v.data = data; v.base = fromArr(data.root); v.diff = !!data.diff; v.total = data.total; v.beforeTotal = data.before_total; v.loading = false; apply(v); }
     if (el.dataset.fg !== key || !el.querySelector('canvas')) mount(v, el);
     v.el = el;
+    el.classList.toggle('fg-loading', !!v.loading);
     toolbar(v);
     draw(v);
   }
@@ -124,7 +125,7 @@ const Flame = (() => {
   function mount(v, el) {
     el.dataset.fg = v.key;
     el.tabIndex = 0;
-    el.innerHTML = `<div class="fg-bar"></div><div class="fg-chips"></div><div class="fg-crumbs"></div><div class="flamewrap"><canvas></canvas><div class="fg-sel"></div></div><div class="fg-pop" hidden></div>`;
+    el.innerHTML = `<div class="fg-bar"></div><div class="fg-chips"></div><div class="fg-crumbs"></div><div class="flamewrap"><div class="fg-busy"><i></i>loading…</div><canvas></canvas><div class="fg-sel"></div></div><div class="fg-pop" hidden></div>`;
     const c = el.querySelector('canvas');
     el.onkeydown = e => keys(v, e);
     c.onmousemove = e => hover(v, e);
@@ -195,7 +196,7 @@ const Flame = (() => {
   function act(v, a, arg) {
     const term = v.search;
     switch (a) {
-      case 'reverse': v.opts.onReverse?.(arg === 'true'); v.path = []; v.zf = 1; v.pan = 0; return;
+      case 'reverse': if ((arg === 'true') === !!v.opts.reverse) return; busy(v, true); v.opts.onReverse?.(arg === 'true'); v.path = []; v.zf = 1; v.pan = 0; return;
       case 'regex': v.regex = !v.regex; break;
       case 'case': v.cs = !v.cs; break;
       case 'next': case 'prev': return step(v, a === 'next' ? 1 : -1);
@@ -450,5 +451,8 @@ const Flame = (() => {
     const inp = v.el.querySelector('.fg-bar input'); inp.focus(); inp.select();
   });
 
-  return { show, views, act: (key, a, arg) => act(views[key], a, arg), redraw: key => { const v = views[key]; if (v?.el && document.contains(v.el)) draw(v); } };
+  // A fetch for this graph is under way: dim it and say so, until show() hands it new data (or the host says it failed)
+  function busy(v, on) { v.loading = on; v.el?.classList.toggle('fg-loading', on); }
+
+  return { show, views, busy: (key, on) => busy(view(String(key)), on), act: (key, a, arg) => act(views[key], a, arg), redraw: key => { const v = views[key]; if (v?.el && document.contains(v.el)) draw(v); } };
 })();

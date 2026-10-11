@@ -60,14 +60,15 @@ function showCapture(jvmId, cid, kind) {
   for (const k of Object.keys(prof)) if (k.startsWith('cap')) prof[k].shown = false;
   setHash({ cap: cid });
   const key = 'cap' + cid;
-  prof[key] = Object.assign(prof[key] || { zoom: [] }, { jvm: jvmId, cap: cid, kind, shown: true, zoom: [], load: () => loadCapFlame(key) });
+  prof[key] = Object.assign(prof[key] || { zoom: [] }, { jvm: jvmId, cap: cid, kind, shown: true, zoom: [], load: quiet => loadCapFlame(key, quiet) });
   renderCaptures(jvmId);
   loadCapFlame(key);
 }
 function setCapBase(cid, base) { const p = prof['cap' + cid]; p.base = base ? +base : null; p.zoom = []; loadCapFlame('cap' + cid); }
-async function loadCapFlame(key) {
+async function loadCapFlame(key, quiet) {
   const p = prof[key];
+  if (!quiet) Flame.busy(key, true);
   try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}${zq(p)}`); p.error = null; }
-  catch (e) { p.error = String(e.message || e); p.flame = null; }
+  catch (e) { p.error = String(e.message || e); p.flame = null; Flame.busy(key, false); }
   renderCaptures(p.jvm);
 }
