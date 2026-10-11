@@ -1135,7 +1135,7 @@ def serve(port):
                 elif path == "/api/capture/flame":
                     self._send(200, json.dumps(_captures.flame(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("reverse") == "1",
                                                                int(q["base"]) if q.get("base") else None, zoom_path(q), q.get("frames", ""),
-                                                               q.get("classes") == "1")), "application/json")
+                                                               q.get("classes") == "1", q.get("categories") == "1")), "application/json")
                 elif path == "/api/capture/html":
                     self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("frames", ""), q.get("reverse") == "1"), "text/html; charset=utf-8")
                 elif path == "/api/capture/file":

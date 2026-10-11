@@ -110,7 +110,7 @@ async function loadProfile(id, force, quiet) {
   try {
     const since = nowSec() - p.window, [t0, t1] = p.sel || [since, nowSec() + 5];
     const [summary, flame] = await Promise.all([api(`/api/jvm/summary?id=${id}&since=${since}&bins=${Math.min(300, p.window)}`),
-      api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}&classes=${p.classes ? 1 : 0}${zq(p)}`)]);
+      api(`/api/jvm/flame?id=${id}&t0=${t0}&t1=${t1}&kind=${p.kind}&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}&reverse=${p.reverse ? 1 : 0}&classes=${showClasses(p) ? 1 : 0}${zq(p)}`)]);
     Object.assign(p, { summary, flame, error: null });
   } catch (e) { p.error = String(e.message || e); Flame.busy(id, false); }
   p.busy = false; p.fetched = Date.now();
@@ -244,6 +244,8 @@ const unit = (kind, v, f) => kind === 'cpu' || kind === 'native' || kind === 'wa
 const waited = s => (s >= 1 ? s.toFixed(1) + ' s' : s >= 1e-3 ? (s * 1e3).toFixed(1) + ' ms' : Math.round(s * 1e6) + ' µs') + ' waited';
 // The flame graph's zoom path, for detail below it (the server prunes small nodes relative to the zoomed subtree there)
 const zq = p => p.zpath?.length ? '&path=' + encodeURIComponent(JSON.stringify(p.zpath)) : '';
+// Allocation and live objects: the class allocated as the top frame (the root when reversed). On unless turned off.
+const showClasses = p => (p.kind === 'alloc' || p.kind === 'live') && p.classes !== false && !p.base;
 // Flame graphs are static/flame.js; this hands each one its data and a title.
 function drawFlame(id) {
   const p = prof[id], el = document.getElementById(`fg-${id}`);
@@ -255,7 +257,8 @@ function drawFlame(id) {
     : p.sel ? 'selected range' : 'whole window';
   // display options the server applies: the class allocated as the top frame (not stored per minute, so not Across JVMs),
   // and for captures, Java frames by line or bytecode index
-  const opts = (id !== 'all' && (p.kind === 'alloc' || p.kind === 'live') ? `<button class="fg-t ${p.classes ? 'on' : ''}" title="the class allocated as the top frame (the root when reversed)" onclick="setProf(${qid(id)}, {classes: ${!p.classes}, zpath: []})">class</button>` : '')
+  const opts = (id !== 'all' && (p.kind === 'alloc' || p.kind === 'live') && !p.base ? `<button class="fg-t ${showClasses(p) ? 'on' : ''}" title="the class allocated as the top frame (the root when reversed)" onclick="setProf(${qid(id)}, {classes: ${!showClasses(p)}, zpath: []})">allocated class</button>` : '')
+    + (String(id).startsWith('cap') && (p.kind === 'cpu' || p.kind === 'wall') && !p.base ? `<button class="fg-t ${capCategories(p) ? 'on' : ''}" title="what kind of work each sample is (GC, JIT, VM, class loading, interpreted or compiled Java), as async-profiler's jfrconv --classify puts it: the first level, either way up" onclick="setProf(${qid(id)}, {categories: ${!capCategories(p)}, zpath: []})">categories</button>` : '')
     + (String(id).startsWith('cap') ? `<span class="seg" title="how Java frames are named (jfrconv's --lines / --bci)">${[['', 'method'], ['line', 'line'], ['bci', 'bci']].map(([k, l]) => `<button class="${(p.frames || '') === k ? 'on' : ''}" onclick="setProf(${qid(id)}, {frames: '${k}', zpath: []})">${l}</button>`).join('')}</span>` : '');
   const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · ${p.thread.group ? 'threads' : 'thread'} ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total, f)) : f.samples ? f.samples + ' samples, each under the unit' : 'no samples'}</span>${opts}`;
   Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v, f), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),

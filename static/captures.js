@@ -106,11 +106,14 @@ function showCapture(jvmId, cid, kind) {
   renderCaptures(jvmId);
   loadCapFlame(key);
 }
+// CPU and wall clock: what kind of work each sample is (GC, JIT, VM, class loading, interpreted or compiled Java), as
+// async-profiler's jfrconv --classify puts it, as the first level either way up. On unless turned off; not in a diff.
+const capCategories = p => (p.kind === 'cpu' || p.kind === 'wall') && p.categories !== false && !p.base;
 function setCapBase(cid, base) { const p = prof['cap' + cid]; p.base = base ? +base : null; p.zoom = []; loadCapFlame('cap' + cid); }
 async function loadCapFlame(key, quiet) {
   const p = prof[key];
   if (!quiet) Flame.busy(key, true);
-  try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}&frames=${p.frames || ''}&classes=${p.classes ? 1 : 0}${zq(p)}`); p.error = null; }
+  try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}&frames=${p.frames || ''}&classes=${showClasses(p) ? 1 : 0}&categories=${capCategories(p) ? 1 : 0}${zq(p)}`); p.error = null; }
   catch (e) { p.error = String(e.message || e); p.flame = null; Flame.busy(key, false); }
   renderCaptures(p.jvm);
 }

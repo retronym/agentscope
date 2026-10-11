@@ -158,10 +158,10 @@ class Captures:
             raise ValueError("no such capture")
         return r[0]
 
-    def flame(self, cid, kind, reverse=False, base=None, zoom=None, frames="", classes=False):
+    def flame(self, cid, kind, reverse=False, base=None, zoom=None, frames="", classes=False, categories=False):
         if frames not in ("", "line", "bci"):
             raise ValueError("frames: '', line or bci")
-        args = dict(path=self.path(cid), kind=kind, reverse=reverse, zoom=zoom or [], frames=frames, classes=classes)
+        args = dict(path=self.path(cid), kind=kind, reverse=reverse, zoom=zoom or [], frames=frames, classes=classes, categories=categories)
         if base:
             args["base"] = self.path(base)
         return self.helper.call("capture_flame", timeout=120, **args)["flame"]

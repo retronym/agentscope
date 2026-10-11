@@ -39,6 +39,10 @@ public final class Profile {
   // so stacks that differ only in what they allocate are separate ids with the same frames; flame() can show it as the
   // top frame, and everything else (activities, minutes, diffs) ignores it.
   private final List<Integer> stackClass = new ArrayList<>();
+  // In captures, the stack's category ("[gc]", "[jit]", "[c2_comp]"...) as a frame id, or -1; part of its identity too,
+  // since it depends on frame types (interpreted or compiled) that frame names don't carry
+  private final List<Integer> stackCategory = new ArrayList<>();
+  private final java.util.Set<Integer> labelFrames = new java.util.HashSet<>();  // category frames: drawn as labels
   private final List<Activities.Activity> stackActivity = new ArrayList<>();  // by stack id, classified lazily
   private final Map<Long, Integer> threadIds = new HashMap<>();
   private final List<String> threadNames = new ArrayList<>();
@@ -55,8 +59,9 @@ public final class Profile {
   private final int ncpu;
   /** How Java frames are named: by method ("" ), or with their line ("line": name:42) or bytecode index ("bci": name@17). */
   private final String detail;
-  /** Lock and park waits in µs rather than ms: captures, where --lock can go well under a millisecond. */
-  private final boolean waitMicros;
+  /** An async-profiler capture: lock and park waits in µs rather than ms (--lock goes well under a millisecond), and
+   *  each stack classified as async-profiler's jfrconv --classify would ({@link Classify}). */
+  private final boolean capture;
   private long first = Long.MAX_VALUE, last, events;
 
   public Profile(int ncpu) {
@@ -67,14 +72,14 @@ public final class Profile {
     this(ncpu, detail, false);
   }
 
-  public Profile(int ncpu, String detail, boolean waitMicros) {
+  public Profile(int ncpu, String detail, boolean capture) {
     this.ncpu = ncpu;
     this.detail = detail == null ? "" : detail;
-    this.waitMicros = waitMicros;
+    this.capture = capture;
   }
 
   private long waited(RecordedEvent e) {
-    return waitMicros ? e.getDuration().toNanos() / 1000 : e.getDuration().toMillis();
+    return capture ? e.getDuration().toNanos() / 1000 : e.getDuration().toMillis();
   }
 
   // ---------------------------------------------------------------- ingest
@@ -163,8 +168,14 @@ public final class Profile {
     int k = 0;
     if (st.isTruncated()) ids[k++] = frame("…");
     for (int j = fs.size() - 1; j >= 0; j--) ids[k++] = frame(fs.get(j));  // JFR is leaf first; we keep root first
-    int[] keyIds = allocated < 0 ? ids : Arrays.copyOf(ids, ids.length + 1);
-    if (allocated >= 0) keyIds[ids.length] = -2 - allocated;  // can't collide with a frame id
+    int category = -1;
+    if (capture) {
+      category = frame(Classify.category(fs));
+      labelFrames.add(category);
+    }
+    int[] keyIds = Arrays.copyOf(ids, ids.length + 2);  // can't collide with a frame id:
+    keyIds[ids.length] = -2 - allocated;  // -1 or below
+    keyIds[ids.length + 1] = -2 - category;
     IntArray key = new IntArray(keyIds);
     Integer id = stackIds.get(key);
     if (id == null) {
@@ -172,6 +183,7 @@ public final class Profile {
       stackIds.put(key, id);
       stacks.add(ids);
       stackClass.add(allocated);
+      stackCategory.add(category);
     }
     return id;
   }
@@ -301,9 +313,15 @@ public final class Profile {
     return flame(t0, t1, kindName, threadFilter, minShare, reverse, path, false);
   }
 
-  /** As {@link #flame}; {@code classes}: for allocation kinds, the class allocated as the top frame (the root when reversed). */
   public synchronized Map<String, Object> flame(long t0, long t1, String kindName, List<Long> threadFilter, double minShare, boolean reverse, List<String> path,
                                                 boolean classes) {
+    return flame(t0, t1, kindName, threadFilter, minShare, reverse, path, classes, false);
+  }
+
+  /** As {@link #flame}; {@code classes}: for allocation kinds, the class allocated as the top frame (the root when reversed);
+   *  {@code categories}: in captures, the stack's category ({@link Classify}) as the first level, in either direction. */
+  public synchronized Map<String, Object> flame(long t0, long t1, String kindName, List<Long> threadFilter, double minShare, boolean reverse, List<String> path,
+                                                boolean classes, boolean categories) {
     int kind = KINDS.indexOf(kindName);
     if (kind < 0) throw new IllegalArgumentException("kind: one of " + KINDS);
     boolean[] want = null;
@@ -328,7 +346,8 @@ public final class Profile {
       if (s < 0) continue;
       Node cur = root;
       int[] st = stacks.get(s);
-      int cls = classes ? stackClass.get(s) : -1;
+      int cls = classes ? stackClass.get(s) : -1, cat = categories ? stackCategory.get(s) : -1;
+      if (cat >= 0) (cur = cur.child(cat)).value += w;
       if (cls >= 0 && reverse) (cur = cur.child(cls)).value += w;
       for (int k = 0; k < st.length; k++) {
         cur = cur.child(st[reverse ? st.length - 1 - k : k]);
@@ -341,9 +360,9 @@ public final class Profile {
     out.put("reverse", reverse);
     out.put("total", total);
     out.put("samples", n);
-    if (waitMicros) out.put("wait_us", true);
+    if (capture) out.put("wait_us", true);
     long min = Math.max(1, (long) (total * minShare)), at = path.isEmpty() ? -1 : root.valueAt(frames, path);
-    out.put("root", root.toJson(frames, min, "all", path, 0, false, at > 0 ? Math.max(1, (long) (at * minShare)) : min));
+    out.put("root", root.toJson(frames, labelFrames, min, "all", path, 0, false, at > 0 ? Math.max(1, (long) (at * minShare)) : min));
     if (!path.isEmpty()) out.put("path", path);
     return out;
   }
@@ -609,7 +628,7 @@ public final class Profile {
     out.put("diff", true);
     out.put("total", tb);
     out.put("before_total", ta);
-    if (after.waitMicros) out.put("wait_us", true);
+    if (after.capture) out.put("wait_us", true);
     out.put("root", root.toJson("all", Math.max(1, (long) (Math.max(ta, tb) * minShare))));
     return out;
   }
@@ -648,7 +667,7 @@ public final class Profile {
     }
 
     List<Object> toJson(List<String> frames, long min, String name) {
-      return toJson(frames, min, name, List.of(), 0, false, min);
+      return toJson(frames, java.util.Set.of(), min, name, List.of(), 0, false, min);
     }
 
     /**
@@ -656,7 +675,7 @@ public final class Profile {
      * threshold is {@code minPath}, relative to the zoomed subtree: detail appears as you zoom in, while the rest of
      * the tree stays as small as before.
      */
-    List<Object> toJson(List<String> frames, long min, String name, List<String> path, int depth, boolean inside, long minPath) {
+    List<Object> toJson(List<String> frames, java.util.Set<Integer> labels, long min, String name, List<String> path, int depth, boolean inside, long minPath) {
       List<Object> kidsOut = new ArrayList<>();
       if (kids != null) {
         List<Node> ks = new ArrayList<>(kids.values());
@@ -665,10 +684,10 @@ public final class Profile {
           String kn = frames.get(k.frame);
           boolean onPath = !inside && depth < path.size() && kn.equals(path.get(depth));
           boolean in = inside || onPath && depth + 1 == path.size();
-          if (k.value >= (inside || onPath ? minPath : min)) kidsOut.add(k.toJson(frames, min, kn, path, depth + 1, in, minPath));
+          if (k.value >= (inside || onPath ? minPath : min)) kidsOut.add(k.toJson(frames, labels, min, kn, path, depth + 1, in, minPath));
         }
       }
-      return List.of(name, value, kidsOut);
+      return labels.contains(frame) ? List.of(name, value, kidsOut, 1) : List.of(name, value, kidsOut);  // 1: a label, not a frame
     }
 
     /** The value of the node at a path of frame names below this one, or -1. */

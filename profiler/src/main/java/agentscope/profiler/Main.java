@@ -29,8 +29,8 @@ import java.util.concurrent.Executors;
  * {"id": 8, "op": "minute", "pid": 123, "t0": ms, "t1": ms}  → {"id": 8, "minute": {groups, rows}}   exact, for storage
  * {"id": 9, "op": "stacks", "pid": 123, "ids": [stack ids]}   → {"id": 9, "stacks": {frames, stacks}}  definitions
  * {"op": "dump", "pid": 123, "since": ms}  → {"dump": {frames, stacks, threads, samples, cpu, gc}}   raw, for the demo's fixture
- * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?, "frames": "line"?, "classes": true?}
- *     async-profiler captures; base: a diff; frames: Java frames with their line or bytecode index ("bci"); classes: the class allocated as the top frame
+ * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?, "frames": "line"?, "classes": true?, "categories": true?}
+ *     async-profiler captures; base: a diff; frames: Java frames with their line or bytecode index ("bci"); classes: the class allocated as the top frame; categories: jfrconv --classify's categories as the first level
  * anything failing                                       → {"id": n, "error": "..."}
  * </pre>
  */
@@ -113,7 +113,8 @@ public final class Main {
           if (!List.of("", "line", "bci").contains(detail)) throw new IllegalArgumentException("frames: '', line or bci");
           resp.put("flame", req.get("base") != null
               ? Profile.diff(captures.load(path(req, "base"), detail), captures.load(path(req, "path"), detail), kind, reverse, 0.002)
-              : captures.load(path(req, "path"), detail).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse, names(req, "zoom"), Boolean.TRUE.equals(req.get("classes"))));
+              : captures.load(path(req, "path"), detail).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse, names(req, "zoom"),
+                  Boolean.TRUE.equals(req.get("classes")), Boolean.TRUE.equals(req.get("categories"))));
         }
         default -> throw new IllegalArgumentException("unknown op: " + op);
       }
