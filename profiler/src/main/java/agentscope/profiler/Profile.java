@@ -204,6 +204,9 @@ public final class Profile {
     String ft = f.getType();
     boolean java = ft == null || JAVA_FRAME_TYPES.contains(ft);
     boolean library = owner == null || owner.isEmpty() || !java && ("C++".equals(ft) || "Kernel".equals(ft) || LIBRARY.matcher(owner).find());
+    // async-profiler's -F vtable puts the receiver of a megamorphic call above its vtable / itable stub as a Java frame
+    // with the class and an empty method name ("Vector.()" to jfr print, plain "Vector" to jfrconv)
+    if (java && !library && m.getName().isEmpty()) return frame(owner + " [receiver]");
     String name = library ? m.getName() : owner + "." + m.getName();
     if (java && detail.equals("line") && f.getLineNumber() >= 0) name += ":" + f.getLineNumber();
     else if (java && detail.equals("bci") && f.getBytecodeIndex() >= 0) name += "@" + f.getBytecodeIndex();
