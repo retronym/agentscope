@@ -46,7 +46,7 @@ function jvmRows(list, withSession, inline) {
   return list.map(j => {
     const s = j.sid && S.sMap[j.sid], open = inline && openJvms.has(j.id);
     const who = withSession ? `<td class="who">${s ? `<a href="#" onclick="event.stopPropagation();openDrawer('${s.sid}');return false" style="text-decoration:none"><span class="lane-chip">${esc(s.lane)}</span> ${esc(s.title)}</a>${j.how && j.how !== 'tree' ? ` <span class="sub" title="attributed by ${esc(j.how)}">⌁</span>` : ''}` : '<span class="dim">no session</span>'}</td>` : '';
-    return `<tr class="jr ${open ? 'open' : ''}" onclick="${inline ? 'toggleJvm' : 'openJvmBox'}(${j.id})" title="${esc(j.main || '')}">
+    return `<tr class="jr ${open ? 'open' : ''}" data-jvm="${j.id}" onclick="${inline ? 'toggleJvm' : 'openJvmBox'}(${j.id})" title="${esc(j.main || '')}">
       <td class="rec">${recToggle(j)}</td>
       <td>${jvmLink(j)} <span class="sub">${j.pid}</span><div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div>${activityLine(j) ? `<div class="jact">${activityLine(j, 2)}</div>` : ''}</td>${who}
       <td class="num">${uptime(j.start)}</td>

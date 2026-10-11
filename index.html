@@ -42,6 +42,7 @@
 }
 body { margin: 0; background: var(--page); color: var(--ink); font: 13px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
+html { overflow-anchor: none; }  /* Anchor (below) does it, by key */
 header { position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 header h1 { font: 500 19px/1 var(--font-prose); margin: 0 8px 0 0; letter-spacing: -.01em; }
 header h1 { display: inline-flex; align-items: center; gap: 8px; }
@@ -407,6 +408,7 @@ async function refresh() {
   S.prMap = Object.fromEntries(S.prs.map(p => [p.key, p]));
   S.sMap = Object.fromEntries(S.sessions.map(s => [s.sid, s]));
   render();
+  Anchor.restore();
 }
 async function refreshLoad() {
   try { LOAD = await api('/api/load?since=' + ((S?.now ?? Date.now() / 1000) - range * 86400)); } catch (e) { LOAD = []; }
@@ -1094,6 +1096,41 @@ function setHash(kv) {
   if (next !== location.hash.slice(1)) history.replaceState(null, '', next ? '#' + next : location.pathname + location.search);
 }
 addEventListener('hashchange', applyHash);
+
+// Keep what's at the top of the screen where it is while things above it change height: the 5-second refresh, a
+// flame graph loading, a section growing a row. The browser's own scroll anchoring gives up because patch() replaces
+// the nodes it anchors to, so this anchors to keyed elements (ids, session cards, JVM rows) and finds them again.
+const Anchor = (() => {
+  let chain = null, adjusting = false, pending = false;
+  const keyOf = e => e.id ? '#' + CSS.escape(e.id) : e.dataset.sid ? `[data-sid="${CSS.escape(e.dataset.sid)}"]` : e.dataset.jvm ? `[data-jvm="${e.dataset.jvm}"]` : null;
+  function capture() {
+    if (adjusting) return;
+    chain = null;
+    if (scrollY < 2) return;  // at the very top: stay there
+    const main = document.querySelector('main'), m = main.getBoundingClientRect(), y = document.querySelector('header').getBoundingClientRect().bottom + 4;
+    for (const x of [m.left + 40, m.left + m.width / 2, m.right - 40]) {
+      let e = document.elementFromPoint(x, y);
+      if (!e || !main.contains(e)) continue;
+      const c = [];
+      for (; e && e !== main; e = e.parentElement) { const k = keyOf(e); if (k) c.push([k, e.getBoundingClientRect().top]); }
+      if (c.length) { chain = c; return; }
+    }
+  }
+  function restore() {
+    if (!chain) return;
+    for (const [k, top] of chain) {
+      const e = document.querySelector(k);
+      if (!e || !e.getClientRects().length) continue;
+      const d = e.getBoundingClientRect().top - top;
+      if (Math.abs(d) >= 1) { adjusting = true; scrollBy(0, d); requestAnimationFrame(() => { adjusting = false; }); }
+      return;
+    }
+  }
+  addEventListener('scroll', () => { if (!pending && !adjusting) { pending = true; requestAnimationFrame(() => { pending = false; capture(); }); } }, { passive: true });
+  addEventListener('resize', () => requestAnimationFrame(capture));
+  new ResizeObserver(restore).observe(document.querySelector('main'));
+  return { capture, restore };
+})();
 refresh().then(refreshLoad).then(applyHash);
 setInterval(refresh, 5000);
 setInterval(refreshLoad, 60000);
