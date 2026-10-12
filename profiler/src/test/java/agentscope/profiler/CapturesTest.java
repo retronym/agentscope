@@ -92,6 +92,33 @@ class CapturesTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void aCaptureBeingWrittenGrowsAsItsChunksFinish() throws Exception {
+    String asprof = asprof();
+    Assumptions.assumeTrue(asprof != null, "async-profiler not installed");
+    try (FixtureProcess f = new FixtureProcess(Path.of(System.getProperty("java.home")))) {
+      Path out = Files.createTempFile("capture", ".jfr");
+      String pid = Long.toString(f.pid());
+      assertEquals(0, new ProcessBuilder(asprof, "start", "-e", "wall", "--chunktime", "1", "-o", "jfr", "-f", out.toString(), pid).inheritIO().start().waitFor());
+      Captures caps = new Captures();
+      long seen = 0;
+      try {
+        for (int i = 0; i < 40 && seen == 0; i++) {  // the first chunk finishes within a few seconds
+          Thread.sleep(500);
+          seen = ((Map<String, Long>) caps.load(out).stats().get("kinds")).getOrDefault("wall", 0L);
+        }
+        assertTrue(seen > 0, "samples from finished chunks while the capture runs");
+      } finally {
+        assertEquals(0, new ProcessBuilder(asprof, "stop", pid).inheritIO().start().waitFor());
+      }
+      long all = ((Map<String, Long>) caps.load(out).stats().get("kinds")).get("wall");
+      assertTrue(all > seen, "the rest once it stops: " + seen + " then " + all);
+      // read whole, from scratch: the same
+      assertEquals(all, ((Map<String, Long>) new Captures().load(out).stats().get("kinds")).get("wall"));
+    }
+  }
+
+  @Test
   void prettyClassNames() {
     assertEquals("byte[]", Profile.prettyClass("[B"));
     assertEquals("java.lang.String[][]", Profile.prettyClass("[[Ljava.lang.String;"));

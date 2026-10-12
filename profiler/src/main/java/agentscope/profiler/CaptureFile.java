@@ -13,8 +13,11 @@ import one.jfr.event.MallocEvent;
 import one.jfr.event.NativeLockEvent;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,17 +26,45 @@ import java.util.Map;
  * jfrconv uses). The JDK's parser materializes a chunk's whole stack-trace pool as objects, a frame each: a 60-second
  * capture of a compiler (59k stacks, 11M frames) took over 2 GB of heap to read into a 65 MB profile. This one keeps
  * stacks as primitive arrays.
+ *
+ * <p>Captures run with {@code --chunktime}, so async-profiler appends a finished chunk every few seconds; {@link #poll}
+ * reads whatever chunks have been finished since it last looked, so a capture can be shown while it runs.
  */
 final class CaptureFile {
-  private CaptureFile() { }
+  private static final int MAGIC = 0x464c5200;  // "FLR\0"
 
-  static Profile read(Path file, String detail) throws IOException {
-    Profile p = new Profile(Runtime.getRuntime().availableProcessors(), detail, true);
-    try (JfrReader jfr = new JfrReader(file.toString())) {
-      jfr.stopAtNewChunk = true;
-      while (jfr.hasMoreChunks()) new Chunk(jfr, p).read();  // ids (stacks, methods, threads) are per chunk
+  final Path file;
+  final Profile profile;
+  private long offset;  // where the next unread chunk starts
+
+  CaptureFile(Path file, String detail) {
+    this.file = file;
+    this.profile = new Profile(Runtime.getRuntime().availableProcessors(), detail, true);
+  }
+
+  /** Reads the chunks finished since the last call. The one being written has a placeholder size (1 GB, from
+   *  async-profiler) until it's done, so a chunk counts once the file holds all of its stated size. */
+  synchronized Profile poll() throws IOException {
+    try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
+      long len = ch.size();
+      ByteBuffer head = ByteBuffer.allocate(16);
+      while (offset + 68 <= len) {
+        head.clear();
+        ch.read(head, offset);
+        if (head.getInt(0) != MAGIC) throw new IOException("not a JFR chunk at " + offset + " in " + file);
+        long size = head.getLong(8);
+        if (size <= 0 || offset + size > len) break;
+        ByteBuffer chunk = ch.map(FileChannel.MapMode.READ_ONLY, offset, size);
+        synchronized (profile) {  // queries hold the profile's lock
+          try (JfrReader jfr = new JfrReader(chunk)) {
+            jfr.stopAtNewChunk = true;
+            while (jfr.hasMoreChunks()) new Chunk(jfr, profile).read();  // ids (stacks, methods, threads) are per chunk
+          }
+        }
+        offset += size;
+      }
     }
-    return p;
+    return profile;
   }
 
   private static final class Chunk {
