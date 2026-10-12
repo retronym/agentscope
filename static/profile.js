@@ -148,7 +148,7 @@ function drawProfile(id) {
   if (r) {
     const [c, g, w] = r, cw = (w - x0) / nb, ch = HEAT_H / 20, mx = Math.max(1, ...s.heat.flat());
     g.fillStyle = muted; g.fillText('CPU samples, by ms within', 4, 20); g.fillText('each second (heatmap)', 4, 34);
-    g.fillText(`${clock(nb * s.bin / 1000)} ago`, 4, HEAT_H + 6);
+    g.fillText(String(id).startsWith('cap') ? `${clock(nb * s.bin / 1000)} window` : `${clock(nb * s.bin / 1000)} ago`, 4, HEAT_H + 6);
     for (let b = 0; b < nb; b++) for (let k = 0; k < 20; k++) {
       const v = s.heat[b][k]; if (!v) continue;
       g.fillStyle = heatColor(v / mx); g.fillRect(x0 + b * cw, 10 + k * ch, Math.ceil(cw), Math.ceil(ch));
@@ -224,7 +224,7 @@ function brush(c, id, w, s, laneAt) {
     const up = () => {
       removeEventListener('mousemove', move); removeEventListener('mouseup', up);
       if (Math.abs(xb - xa) < 3) p.sel = null;
-      p.zoom = []; loadProfile(id, true);
+      p.zoom = []; p.load ? p.load() : loadProfile(id, true);
     };
     addEventListener('mousemove', move); addEventListener('mouseup', up);
   };
@@ -252,14 +252,15 @@ function drawFlame(id) {
   if (!p || !el) return;
   if (!p.flame) { if (!el.dataset.fg) el.innerHTML = `<div class="sub">${p.error ? '⚠ ' + esc(p.error) : 'loading…'}</div>`; return; }
   const f = p.flame;
-  const what = String(id).startsWith('cap') ? (f.diff ? 'difference against the chosen capture: red grew, blue shrank' : 'capture')
+  const what = String(id).startsWith('cap') ? (f.diff ? 'difference against the chosen capture: red grew, blue shrank'
+      : (p.sel ? 'selected range' : 'whole capture') + (f.source === 'jfr' ? ' · from JFR\'s recording of the same window' : ''))
     : id === 'all' ? (p.abs ? 'selected range' : esc(ALL_RANGES.find(r => r[0] === p.range)[1])) + ', per minute, every recorded JVM'
     : p.sel ? 'selected range' : 'whole window';
   // display options the server applies: the class allocated as the top frame (not stored per minute, so not Across JVMs),
   // and for captures, Java frames by line or bytecode index
   const opts = (id !== 'all' && (p.kind === 'alloc' || p.kind === 'live') && !p.base ? `<button class="fg-t ${showClasses(p) ? 'on' : ''}" title="the class allocated as the top frame (the root when reversed)" onclick="setProf(${qid(id)}, {classes: ${!showClasses(p)}, zpath: []})">allocated class</button>` : '')
-    + (String(id).startsWith('cap') && (p.kind === 'cpu' || p.kind === 'wall') && !p.base ? `<button class="fg-t ${capCategories(p) ? 'on' : ''}" title="what kind of work each sample is (GC, JIT, VM, class loading, interpreted or compiled Java), as async-profiler's jfrconv --classify puts it: the first level, either way up" onclick="setProf(${qid(id)}, {categories: ${!capCategories(p)}, zpath: []})">categories</button>` : '')
-    + (String(id).startsWith('cap') ? `<span class="seg" title="how Java frames are named (jfrconv's --lines / --bci)">${[['', 'method'], ['line', 'line'], ['bci', 'bci']].map(([k, l]) => `<button class="${(p.frames || '') === k ? 'on' : ''}" onclick="setProf(${qid(id)}, {frames: '${k}', zpath: []})">${l}</button>`).join('')}</span>` : '');
+    + (String(id).startsWith('cap') && (p.kind === 'cpu' || p.kind === 'wall') && !p.base && f.source !== 'jfr' ? `<button class="fg-t ${capCategories(p) ? 'on' : ''}" title="what kind of work each sample is (GC, JIT, VM, class loading, interpreted or compiled Java), as async-profiler's jfrconv --classify puts it: the first level, either way up" onclick="setProf(${qid(id)}, {categories: ${!capCategories(p)}, zpath: []})">categories</button>` : '')
+    + (String(id).startsWith('cap') && f.source !== 'jfr' ? `<span class="seg" title="how Java frames are named (jfrconv's --lines / --bci)">${[['', 'method'], ['line', 'line'], ['bci', 'bci']].map(([k, l]) => `<button class="${(p.frames || '') === k ? 'on' : ''}" onclick="setProf(${qid(id)}, {frames: '${k}', zpath: []})">${l}</button>`).join('')}</span>` : '');
   const titleHtml = `<b>Flame graph</b> <span class="sub">${esc(KIND_LABEL[p.kind] || p.kind)} · ${what}${p.thread ? ` · ${p.thread.group ? 'threads' : 'thread'} ${esc(p.thread.name)} <a href="#" onclick="setProf(${qid(id)},{thread:null});return false">✕</a>` : ''} · ${f.total ? esc(unit(p.kind, f.total, f)) : f.samples ? f.samples + ' samples, each under the unit' : 'no samples'}</span>${opts}`;
   Flame.show(String(id), el, f, { titleHtml, unit: v => unit(p.kind, v, f), reverse: !!p.reverse, onReverse: r => setProf(id, { reverse: r, zpath: [] }),
     onZoom: path => { p.zpath = path; p.load ? p.load(true) : id === 'all' ? loadAllFlame(true, true) : loadProfile(id, true, true); } });
@@ -312,4 +313,4 @@ function activityLine(j, n = 3) {
 
 // Canvases are drawn at their current width: redraw when it changes
 let _resizeT;
-addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' || id.startsWith('cap') ? drawFlame(id) : drawProfile(+id)); renderActivity(); }, 100); });
+addEventListener('resize', () => { clearTimeout(_resizeT); _resizeT = setTimeout(() => { for (const id of Object.keys(prof)) (id === 'all' ? drawFlame(id) : id.startsWith('cap') ? drawProfile(id) : drawProfile(+id)); renderActivity(); }, 100); });

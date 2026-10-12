@@ -33,19 +33,26 @@ async function loadCaptures(jvmId, force) {
   try { capLists[jvmId] = { t: Date.now(), rows: await api(`/api/captures?jvm=${jvmId}`) }; } catch (e) { capLists[jvmId] = { t: Date.now(), rows: [] }; }
   // a capture that finishes while you're looking opens by itself; #cap=<id> opens one from a link
   const want = +hashState().cap || capLists[jvmId].rows.find(r => before.has(r.id) && r.status === 'done')?.id;
-  const r = want && capLists[jvmId].rows.find(r => r.id === want && r.status === 'done');
-  if (r && !prof['cap' + r.id]?.shown) showCapture(jvmId, r.id, Object.keys(r.kinds || {})[0] || 'cpu');
+  const r = want && capLists[jvmId].rows.find(r => r.id === want && r.status !== 'failed');
+  if (r && !prof['cap' + r.id]?.shown) showCapture(jvmId, r.id, Object.keys(r.kinds || {})[0] || (r.mode === 'cpu' ? 'cpu' : 'wall'));
+  // the one shown: again every few seconds while it runs, and once more when it ends
+  for (const row of capLists[jvmId].rows) {
+    const p = prof['cap' + row.id];
+    if (p?.shown && (row.status === 'running' ? Date.now() - (p.fetched || 0) > 5000 : before.has(row.id))) p.load(true);
+  }
   if (boxId === jvmId) renderCaptures(jvmId);
   return capLists[jvmId].rows;
 }
 
 async function startCapture(jvmId, mode) {
+  let started;
   const label = CAP_MODES.find(m => m[0] === mode)[1], opts = capOpts(), sum = capOptsSummary(opts);
   if (!confirm(`Capture ${capSecs()} s of ${label} with async-profiler${sum ? ` (${sum})` : ''}?\n\nThis loads async-profiler's native agent into the JVM. Once loaded it stays (an agent can't be unloaded), idle between captures.`)) return;
   capPanel = null;
-  try { await post('/api/jvm/capture', { id: jvmId, mode, seconds: capSecs(), opts }); }
+  try { started = await post('/api/jvm/capture', { id: jvmId, mode, seconds: capSecs(), opts }); }
   catch (e) { alert('Capture failed to start: ' + (e.message || e)); }
-  loadCaptures(jvmId, true);
+  await loadCaptures(jvmId, true);
+  if (started?.id) showCapture(jvmId, started.id, mode === 'cpu' ? 'cpu' : 'wall');  // shown from the start: it fills in as it runs
 }
 
 async function stopCapture(jvmId, cid, btn) {
@@ -63,8 +70,8 @@ function renderCaptures(jvmId) {
     const open = Object.keys(prof).find(k => k.startsWith('cap') && prof[k].jvm === jvmId && prof[k].shown), p = open && prof[open];
     patch(el, `<div class="profh"><b>Captures</b><span class="sub">${rows.length ? 'taken while this JVM ran' : 'none taken while this JVM ran'}</span></div>
       ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
-      ${p ? `<div class="profc"><div class="fg" id="fg-${open}"></div></div>` : ''}`);
-    if (p) drawFlame(open);
+      ${p ? capView(open, p, rows.find(r => r.id === p.cap)) : ''}`);
+    if (p) drawProfile(open);
     return;
   }
   const open = Object.keys(prof).find(k => k.startsWith('cap') && prof[k].jvm === jvmId && prof[k].shown);
@@ -78,8 +85,23 @@ function renderCaptures(jvmId) {
         <button class="recbtn sm on" title="stop now and keep what's been captured" onclick="stopCapture(${jvmId}, ${running.id}, this)"><i></i>Stop</button>` : ''}</div>
     ${capPanel && !running ? capSettings(jvmId, capPanel) : ''}
     ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
-    ${p ? `<div class="profc"><div class="fg" id="fg-${open}"></div></div>` : ''}`);
-  if (p) drawFlame(open);
+    ${p ? capView(open, p, rows.find(r => r.id === p.cap)) : ''}`);
+  if (p) drawProfile(open);
+}
+
+// A capture shown like a JVM's profile: heatmap, thread lanes and GC pauses over its window (JFR filling in what
+// async-profiler doesn't have: thread CPU load, GC, and any kind the capture lacks), a switch over every kind either
+// has, brushing and thread filters, and the flame graph. It grows every few seconds while the capture runs.
+function capView(key, p, row) {
+  const kinds = Object.keys(row?.kinds || {});
+  if (!kinds.includes(p.kind)) kinds.unshift(p.kind);
+  const fold = (id, title, sub, canvas) => `<div class="${foldClass(id)}" id="${id}"><div class="profh sm"><b>${title}</b>${sub ? `<span class="sub">${sub}</span>` : ''}</div><canvas id="${canvas}"></canvas></div>`;
+  return `<div class="profh capview"><b>${esc(row?.mode_label || 'Capture')}</b>
+      <span class="sub">${row ? new Date(row.started * 1000).toLocaleTimeString() : ''}${row?.status === 'running' ? ' · running: grows every 5 s' : ''}</span>
+      <span class="seg" title="a kind async-profiler captured comes from the capture; any other from JFR's recording of the same window">${kinds.map(k => `<button class="${p.kind === k ? 'on' : ''}" onclick="setProf('${key}', {kind:'${k}', zpath: []})">${esc(KIND_LABEL[k] || k)}</button>`).join('')}</span>
+      <span class="sub" id="profstat-${key}"></span></div>
+    <div class="profc">${fold('cheat', 'Heatmap', '', `heat-${key}`)}${fold('clanes', 'Thread lanes', 'CPU load from JFR · click a name to show only that thread or group below', `lanes-${key}`)}
+      <div class="fg" id="fg-${key}"></div></div>`;
 }
 
 function capSettings(jvmId, mode) {
@@ -120,10 +142,22 @@ const capCategories = p => (p.kind === 'cpu' || p.kind === 'wall') && p.categori
 function setCapBase(cid, base) { const p = prof['cap' + cid]; p.base = base ? +base : null; p.zoom = []; loadCapFlame('cap' + cid); }
 async function loadCapFlame(key, quiet) {
   const p = prof[key];
+  if (p.busy) { p.again = true; return; }
+  p.busy = true;
   if (!quiet) Flame.busy(key, true);
-  try { p.flame = await api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}&frames=${p.frames || ''}&classes=${showClasses(p) ? 1 : 0}&categories=${capCategories(p) ? 1 : 0}${zq(p)}`); p.error = null; }
-  catch (e) { p.error = String(e.message || e); p.flame = null; Flame.busy(key, false); }
+  const range = p.sel ? `&t0=${p.sel[0]}&t1=${p.sel[1]}` : '', thread = `&threads=${p.thread?.tid ?? ''}&group=${encodeURIComponent(p.thread?.group ?? '')}`;
+  try {
+    [p.summary, p.flame] = await Promise.all([api(`/api/capture/summary?id=${p.cap}&bins=150`),
+      api(`/api/capture/flame?id=${p.cap}&kind=${p.kind}&reverse=${p.reverse ? 1 : 0}${p.base ? '&base=' + p.base : ''}&frames=${p.frames || ''}&classes=${showClasses(p) ? 1 : 0}&categories=${capCategories(p) ? 1 : 0}${range}${thread}${zq(p)}`)]);
+    p.error = null;
+  } catch (e) {
+    const running = capLists[p.jvm]?.rows.find(r => r.id === p.cap)?.status === 'running';
+    p.error = running ? 'starting: the first chunk lands within a few seconds' : String(e.message || e);
+    Flame.busy(key, false);
+  }
+  p.busy = false; p.fetched = Date.now();
   renderCaptures(p.jvm);
+  if (p.again) { p.again = false; loadCapFlame(key, true); }
 }
 
 // ---------------------------------------------------------------- every JVM's captures, on the main page

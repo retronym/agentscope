@@ -21,7 +21,7 @@ The aim: what's left to trade off is only what async-profiler itself costs, a na
 - [x] 2. Server: captures run with `--chunktime 5`; the file's path is known from the start, and capture queries work while it runs.
 - [x] 3. Auto-record: a capture records its JVM if it isn't already, and puts it back afterwards unless you changed Record in the meantime; at the end, JFR's window is dumped beside the capture.
 - [x] 4. Helper: capture queries combine the capture with JFR's profile of the same JVM and window (the live recording, else the dumped file): a summary (lanes, heatmap, GC), flame graphs by the rule above, and the union of kinds.
-- [ ] 5. Page: the capture view becomes the profile view, refreshing while the capture runs.
+- [x] 5. Page: the capture view becomes the profile view, refreshing while the capture runs.
 - [ ] 6. Docs: docs/jvm-profiler.md and the README.
 
 ## Future work
