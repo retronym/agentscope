@@ -1063,7 +1063,7 @@ def serve(port):
     sampler.recorder = recording.Recorder(sampler.jvms, _helper, os.path.join(os.path.dirname(DB_FILE), "recording.json"), db)  # beside the db: a dev copy keeps its own
     sampler.recorder.stored_first()
     global _captures
-    _captures = captures.Captures(db, _helper, sampler.jvms, os.path.join(os.path.dirname(DB_FILE), "captures"))
+    _captures = captures.Captures(db, _helper, sampler.jvms, os.path.join(os.path.dirname(DB_FILE), "captures"), sampler.recorder)
     atexit.register(sampler.recorder.stop_all)
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # run atexit (stop recordings) on kill, too
     threading.Thread(target=sampler.loop, args=(meta_cached,), daemon=True).start()
@@ -1141,7 +1141,12 @@ def serve(port):
                 elif path == "/api/capture/flame":
                     self._send(200, json.dumps(_captures.flame(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("reverse") == "1",
                                                                int(q["base"]) if q.get("base") else None, zoom_path(q), q.get("frames", ""),
-                                                               q.get("classes") == "1", q.get("categories") == "1")), "application/json")
+                                                               q.get("classes") == "1", q.get("categories") == "1",
+                                                               float(q["t0"]) if q.get("t0") else None, float(q["t1"]) if q.get("t1") else None,
+                                                               [int(x) for x in q.get("threads", "").split(",") if x.lstrip("-").isdigit()],
+                                                               q.get("group") or None)), "application/json")
+                elif path == "/api/capture/summary":
+                    self._send(200, json.dumps(_captures.summary(int(q.get("id", 0)), int(q.get("bins", 300)))), "application/json")
                 elif path == "/api/capture/html":
                     self._send(200, _captures.html(int(q.get("id", 0)), q.get("kind", "cpu"), q.get("frames", ""), q.get("reverse") == "1"), "text/html; charset=utf-8")
                 elif path == "/api/capture/file":

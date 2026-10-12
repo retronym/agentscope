@@ -106,6 +106,12 @@ public final class Recordings {
     return r.profile();
   }
 
+  /** The profile of a JVM's recording, live or ended, if this helper has one. */
+  public Profile profileOrNull(long pid) {
+    Rec r = recs.get(pid);
+    return r == null ? null : r.profile();
+  }
+
   public Map<String, Object> list() {
     Map<String, Object> m = new LinkedHashMap<>();
     recs.forEach((pid, r) -> m.put(pid.toString(), describe(r)));

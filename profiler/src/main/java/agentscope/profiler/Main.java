@@ -31,6 +31,9 @@ import java.util.concurrent.Executors;
  * {"op": "dump", "pid": 123, "since": ms}  → {"dump": {frames, stacks, threads, samples, cpu, gc}}   raw, for the demo's fixture
  * {"op": "capture_stats", "path": "x.jfr"}  /  {"op": "capture_flame", "path": "x.jfr", "kind": "wall", "base": "y.jfr"?, "frames": "line"?, "classes": true?, "categories": true?}
  *     async-profiler captures; base: a diff; frames: Java frames with their line or bytecode index ("bci"); classes: the class allocated as the top frame; categories: jfrconv --classify's categories as the first level
+ * {"op": "capture_summary", "path": "x.jfr", "t0": ms, "t1": ms, "bins": 300}  → {"summary": {...}}   as summary, for a capture
+ *     capture_*: with "jfr": "x-jfr.jfr" (JFR's window, dumped beside the capture) or "pid": 123 (its live recording), JFR fills in
+ *     what async-profiler doesn't have: thread CPU load, GC pauses, and any kind the capture lacks; t0, t1: the window
  * anything failing                                       → {"id": n, "error": "..."}
  * </pre>
  */
@@ -103,18 +106,37 @@ public final class Main {
               String.valueOf(req.getOrDefault("kind", "cpu")), threads, 0.002, Boolean.TRUE.equals(req.get("reverse")), names(req, "path"),
               Boolean.TRUE.equals(req.get("classes"))));
         }
-        case "capture_stats" -> resp.put("stats", captures.load(path(req, "path")).stats());
+        case "capture_stats" -> {
+          // the capture's own kinds, and JFR's in its window (t0, t1) when there's a context: what the capture can show
+          Map<String, Object> stats = captures.load(path(req, "path")).stats();
+          Profile ctx = context(req);
+          if (ctx != null) {
+            @SuppressWarnings("unchecked") Map<String, Long> kinds = new LinkedHashMap<>((Map<String, Long>) stats.get("kinds"));
+            ctx.kinds(num(req, "t0", 0), num(req, "t1", Long.MAX_VALUE)).forEach(kinds::putIfAbsent);
+            stats.put("kinds", kinds);
+          }
+          resp.put("stats", stats);
+        }
+        case "capture_summary" -> resp.put("summary", Profile.summary(captures.load(path(req, "path")), context(req), num(req, "t0", 0),
+            num(req, "t1", Long.MAX_VALUE), (int) num(req, "bins", 300)));
         case "capture_flame" -> {
-          List<Long> threads = new ArrayList<>();
-          if (req.get("threads") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) threads.add(n.longValue());
           String kind = String.valueOf(req.getOrDefault("kind", "cpu"));
           boolean reverse = Boolean.TRUE.equals(req.get("reverse"));
           String detail = String.valueOf(req.getOrDefault("frames", ""));
           if (!List.of("", "line", "bci").contains(detail)) throw new IllegalArgumentException("frames: '', line or bci");
+          long t0 = num(req, "t0", 0), t1 = num(req, "t1", Long.MAX_VALUE);
+          Profile cap = captures.load(path(req, "path"), detail), ctx = context(req);
+          int k = Profile.KINDS.indexOf(kind);
+          // a kind async-profiler has, from the capture; any other, from JFR's recording of the same window
+          Profile src = ctx == null || k >= 0 && cap.has(k, t0, t1) ? cap : ctx;
+          List<Long> threads = new ArrayList<>();
+          if (req.get("threads") instanceof List<?> l) for (Object o : l) if (o instanceof Number n) threads.add(n.longValue());
+          if (req.get("group") instanceof String g) threads.addAll(src.threadsInGroup(g));
           resp.put("flame", req.get("base") != null
-              ? Profile.diff(captures.load(path(req, "base"), detail), captures.load(path(req, "path"), detail), kind, reverse, 0.002)
-              : captures.load(path(req, "path"), detail).flame(0, Long.MAX_VALUE, kind, threads, 0.002, reverse, names(req, "zoom"),
-                  Boolean.TRUE.equals(req.get("classes")), Boolean.TRUE.equals(req.get("categories"))));
+              ? Profile.diff(captures.load(path(req, "base"), detail), cap, kind, reverse, 0.002)
+              : src.flame(t0, t1, kind, threads, 0.002, reverse, names(req, "zoom"),
+                  Boolean.TRUE.equals(req.get("classes")), src == cap && Boolean.TRUE.equals(req.get("categories"))));
+          if (src != cap) ((Map<String, Object>) resp.get("flame")).put("source", "jfr");
         }
         default -> throw new IllegalArgumentException("unknown op: " + op);
       }
@@ -129,6 +151,14 @@ public final class Main {
         return "{\"id\":null,\"error\":\"unserializable\"}";
       }
     }
+  }
+
+  /** JFR's recording of a capture's JVM and window: the file dumped beside it once it ended ("jfr"), else the live
+   *  recording ("pid"), else none. */
+  private static Profile context(Map<String, Object> req) throws Exception {
+    if (req.get("jfr") instanceof String s && s.endsWith(".jfr") && java.nio.file.Files.exists(java.nio.file.Path.of(s))) return captures.loadJfr(java.nio.file.Path.of(s));
+    if (req.get("pid") instanceof Number n) return recordings.profileOrNull(n.longValue());
+    return null;
   }
 
   private static java.nio.file.Path path(Map<String, Object> req, String key) {

@@ -28,6 +28,7 @@ class Recorder:
         self.lock = threading.Lock()
         self.on, self.scope, self.since = False, "agents", None
         self.manual = {}  # jvm id -> True / False: the user's choice for that JVM, over the global switch
+        self.held = set()  # jvm ids recording only because a capture asked (manual True on its behalf), until it ends
         self.recs = {}  # jvm id -> dict(pid, since, live, error, gen)
         self.work = queue.Queue()
         self.queued = set()  # (op, jvm id) waiting for the worker, so ticks don't pile up duplicates
@@ -49,7 +50,7 @@ class Recorder:
                 self.manual = {k: v for k, v in self.manual.items() if v}  # a fresh Record forgets earlier opt-outs
             self.on = bool(on)
             if not on:
-                self.manual.clear()
+                self.manual = {k: True for k in self.held}  # a running capture keeps its JVM recording
         self.reconcile()
 
     def set_settings(self, **kv):
@@ -64,6 +65,40 @@ class Recorder:
     def set_jvm(self, jvm_id, on):
         with self.lock:
             self.manual[jvm_id] = bool(on)
+            self.held.discard(jvm_id)  # the user's choice now, kept after the capture
+        self.reconcile()
+
+    def live(self, jvm_id):
+        with self.lock:
+            r = self.recs.get(jvm_id)
+            return bool(r and r["live"] and r.get("gen") == self.helper.gen)
+
+    def hold(self, j, wait=20):
+        """For a capture: make sure its JVM is recording, so JFR fills in what async-profiler doesn't (thread CPU load, GC
+        pauses, kinds the capture lacks). Waits until it records (or can't); returns whether it was off and is now held."""
+        if j["label"] == "agentscope helper" or jdk_major(j["version"]) < MIN_JDK or self.live(j["id"]):
+            return False
+        with self.lock:
+            held = self.manual.get(j["id"]) is not True
+            if held:
+                self.manual[j["id"]] = True
+                self.held.add(j["id"])
+        self.reconcile()
+        until = time.time() + wait
+        while time.time() < until and not self.live(j["id"]):
+            with self.lock:
+                if (self.recs.get(j["id"]) or {}).get("error"):
+                    break
+            time.sleep(0.25)
+        return held
+
+    def release(self, jvm_id):
+        """After a capture: back to what Record says for the JVM, unless the user chose for it meanwhile."""
+        with self.lock:
+            if jvm_id not in self.held:
+                return
+            self.held.discard(jvm_id)
+            self.manual.pop(jvm_id, None)
         self.reconcile()
 
     # -------------------------------------------------------------- what should be recording
@@ -209,7 +244,7 @@ class Recorder:
         try:
             pids = sorted({r["pid"] for r in self.recs.values() if r["live"]})
             with open(self.state_file, "w") as f:
-                json.dump(dict(pids=pids, on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items()},
+                json.dump(dict(pids=pids, on=self.on, scope=self.scope, since=self.since, manual={str(k): v for k, v in self.manual.items() if k not in self.held},
                                settings=self.settings), f)
         except OSError:
             pass

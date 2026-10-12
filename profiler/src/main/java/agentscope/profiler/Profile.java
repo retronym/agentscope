@@ -257,70 +257,118 @@ public final class Profile {
    * The heatmap is per bin: CPU samples in each of 20 sub-second slots (as async-profiler's heatmap).
    */
   public synchronized Map<String, Object> summary(long since, int maxBins) {
-    long now = Math.max(last, since);
-    long span = Math.max(1000, now - since);
-    long bin = Math.max(1000, (span / maxBins + 999) / 1000 * 1000);
-    int nbins = (int) (span / bin) + 1;
-    Map<Integer, double[][]> lanes = new HashMap<>();
-    int[][] heat = new int[nbins][20];
+    return summary(this, this, since, Math.max(last, since) + 1, maxBins);
+  }
+
+  /**
+   * As {@link #summary(long, int)}, for a capture: samples of each kind from {@code samples} when it has that kind in
+   * [since, until), else from {@code context}, JFR's recording of the same JVM; per-thread CPU load and GC pauses from
+   * {@code context}. Lanes are matched across the two by Java thread id. {@code context} may be null.
+   */
+  static Map<String, Object> summary(Profile samples, Profile context, long since, long until, int maxBins) {
+    Profile ctx = context != null ? context : samples;
+    synchronized (samples) {
+      synchronized (ctx) {
+        long span = Math.max(1000, until - since);
+        long bin = Math.max(1000, (span / maxBins + 999) / 1000 * 1000);
+        int nbins = (int) (span / bin) + 1;
+        Map<Long, double[][]> lanes = new HashMap<>();
+        Map<Long, String> names = new HashMap<>();
+        int[][] heat = new int[nbins][20];
+        for (int kind : new int[]{CPU, NATIVE, PARK, LOCK}) {
+          Profile src = samples.has(kind, since, until) ? samples : ctx;
+          double scale = (kind == PARK || kind == LOCK) && src.capture ? 1 / 1000.0 : 1;  // lanes say ms
+          Ring r = src.samples;
+          for (int i = r.lo; i < r.n; i++) {
+            long t = r.t[i];
+            if (r.c[i] != kind || t < since || t >= until || r.a[i] < 0) continue;
+            int b = (int) ((t - since) / bin);
+            if (b >= nbins) continue;
+            long key = src.threadJavaIds.get(r.a[i]);
+            names.putIfAbsent(key, src.threadNames.get(r.a[i]));
+            double[] cell = lanes.computeIfAbsent(key, x -> new double[nbins][5])[b];
+            switch (kind) {
+              case CPU -> {
+                cell[1]++;
+                heat[b][(int) (t % 1000 / 50)]++;
+              }
+              case NATIVE -> cell[2]++;
+              case PARK -> cell[3] += r.w[i] * scale;
+              case LOCK -> cell[4] += r.w[i] * scale;
+              default -> { }
+            }
+          }
+        }
+        Ring cpu = ctx.cpu;
+        for (int i = cpu.lo; i < cpu.n; i++) {
+          if (cpu.t[i] < since || cpu.t[i] >= until) continue;
+          int b = (int) ((cpu.t[i] - since) / bin);
+          if (b >= nbins) continue;
+          long key = ctx.threadJavaIds.get(cpu.a[i]);
+          names.putIfAbsent(key, ctx.threadNames.get(cpu.a[i]));
+          lanes.computeIfAbsent(key, x -> new double[nbins][5])[b][0] += cpu.w[i] / 10_000.0 * 1000 / bin;
+        }
+        List<Map<String, Object>> threads = new ArrayList<>();
+        for (var en : lanes.entrySet()) {
+          double total = 0;
+          Map<Integer, double[]> sparse = new LinkedHashMap<>();
+          double[][] cells = en.getValue();
+          for (int b = 0; b < nbins; b++) {
+            double[] c = cells[b];
+            if (c[0] > 0.005 || c[1] > 0 || c[2] > 0 || c[3] > 0 || c[4] > 0) {
+              c[0] = Math.round(c[0] * 1000) / 1000.0;
+              sparse.put(b, c);
+            }
+            total += c[0] + c[1] * 0.02;  // cores, or 20 ms per CPU sample when there's no CPU load event yet
+          }
+          if (sparse.isEmpty()) continue;
+          Map<String, Object> m = new LinkedHashMap<>();
+          m.put("tid", en.getKey());
+          m.put("name", names.get(en.getKey()));
+          m.put("busy", Math.round(total * 100) / 100.0);
+          m.put("bins", sparse);
+          threads.add(m);
+        }
+        threads.sort((x, y) -> Double.compare((double) y.get("busy"), (double) x.get("busy")));
+        List<long[]> gc = new ArrayList<>();
+        List<String> gcn = new ArrayList<>();
+        for (int i = ctx.gcs.lo; i < ctx.gcs.n; i++) {
+          if (ctx.gcs.t[i] < since || ctx.gcs.t[i] >= until) continue;
+          gc.add(new long[]{ctx.gcs.t[i], ctx.gcs.w[i]});
+          gcn.add(ctx.gcNames.get(i - ctx.gcs.lo));
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("since", since);
+        out.put("bin", bin);
+        out.put("bins", nbins);
+        out.put("first", samples.first == Long.MAX_VALUE ? null : samples.first);
+        out.put("last", samples.last == 0 ? null : samples.last);
+        out.put("threads", threads);
+        out.put("heat", heat);
+        out.put("gc", gc);
+        out.put("gc_names", gcn);
+        return out;
+      }
+    }
+  }
+
+  /** Whether there are samples of a kind in [t0, t1). */
+  synchronized boolean has(int kind, long t0, long t1) {
+    for (int i = samples.lo; i < samples.n; i++) if (samples.c[i] == kind && samples.t[i] >= t0 && samples.t[i] < t1) return true;
+    return false;
+  }
+
+  /** The kinds with samples in [t0, t1), and their weight. */
+  synchronized Map<String, Long> kinds(long t0, long t1) {
+    long[] w = new long[KINDS.size()];
+    boolean[] any = new boolean[KINDS.size()];
     for (int i = samples.lo; i < samples.n; i++) {
-      long t = samples.t[i];
-      if (t < since) continue;
-      int b = (int) ((t - since) / bin), th = samples.a[i], kind = samples.c[i];
-      if (b >= nbins) continue;
-      double[] cell = lanes.computeIfAbsent(th, x -> new double[nbins][5])[b];
-      switch (kind) {
-        case CPU -> {
-          cell[1]++;
-          heat[b][(int) (t % 1000 / 50)]++;
-        }
-        case NATIVE -> cell[2]++;
-        case PARK -> cell[3] += samples.w[i];
-        case LOCK -> cell[4] += samples.w[i];
-        default -> { }
-      }
+      if (samples.t[i] < t0 || samples.t[i] >= t1) continue;
+      w[samples.c[i]] += samples.w[i];
+      any[samples.c[i]] = true;
     }
-    for (int i = cpu.lo; i < cpu.n; i++) {
-      if (cpu.t[i] < since) continue;
-      int b = (int) ((cpu.t[i] - since) / bin);
-      if (b < nbins) lanes.computeIfAbsent(cpu.a[i], x -> new double[nbins][5])[b][0] += cpu.w[i] / 10_000.0 * 1000 / bin;
-    }
-    List<Map<String, Object>> threads = new ArrayList<>();
-    for (var en : lanes.entrySet()) {
-      double total = 0;
-      Map<Integer, double[]> sparse = new LinkedHashMap<>();
-      double[][] cells = en.getValue();
-      for (int b = 0; b < nbins; b++) {
-        double[] c = cells[b];
-        if (c[0] > 0.005 || c[1] > 0 || c[2] > 0 || c[3] > 0 || c[4] > 0) {
-          c[0] = Math.round(c[0] * 1000) / 1000.0;
-          sparse.put(b, c);
-        }
-        total += c[0] + c[1] * 0.02;  // cores, or 20 ms per CPU sample when there's no CPU load event yet
-      }
-      if (sparse.isEmpty()) continue;
-      Map<String, Object> m = new LinkedHashMap<>();
-      m.put("tid", threadJavaIds.get(en.getKey()));
-      m.put("name", threadNames.get(en.getKey()));
-      m.put("busy", Math.round(total * 100) / 100.0);
-      m.put("bins", sparse);
-      threads.add(m);
-    }
-    threads.sort((x, y) -> Double.compare((double) y.get("busy"), (double) x.get("busy")));
-    List<long[]> gc = new ArrayList<>();
-    for (int i = gcs.lo; i < gcs.n; i++) if (gcs.t[i] >= since) gc.add(new long[]{gcs.t[i], gcs.w[i]});
-    List<String> gcn = new ArrayList<>();
-    for (int i = gcs.lo; i < gcs.n; i++) if (gcs.t[i] >= since) gcn.add(gcNames.get(i - gcs.lo));
-    Map<String, Object> out = new LinkedHashMap<>();
-    out.put("since", since);
-    out.put("bin", bin);
-    out.put("bins", nbins);
-    out.put("first", first == Long.MAX_VALUE ? null : first);
-    out.put("last", last == 0 ? null : last);
-    out.put("threads", threads);
-    out.put("heat", heat);
-    out.put("gc", gc);
-    out.put("gc_names", gcn);
+    Map<String, Long> out = new LinkedHashMap<>();
+    for (int k = 0; k < w.length; k++) if (any[k]) out.put(KINDS.get(k), w[k]);
     return out;
   }
 
