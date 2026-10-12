@@ -12,6 +12,8 @@ const jvmHistCache = {};  // id -> {key, rows}
 const mb = b => b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 || !b ? Math.round(b / 1e6) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 const pct = v => v == null ? '–' : v < 1 && v > 0 ? '<1%' : Math.round(v) + '%';
 const rate = b => b == null ? '–' : b < 1e6 ? '<1 MB/s' : b < 1e9 ? Math.round(b / 1e6) + ' MB/s' : (b / 1e9).toFixed(1) + ' GB/s';
+const num = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n * (n < 10 ? 10 : 1)) / (n < 10 ? 10 : 1));
+const secs = s => s < 90 ? s.toFixed(s < 10 ? 1 : 0) + ' s' : s < 5400 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
 const uptime = t => { const d = S.now - t; return d < 3600 ? Math.round(d / 60) + 'm' : d < 86400 ? (d / 3600).toFixed(d < 36000 ? 1 : 0) + 'h' : (d / 86400).toFixed(1) + 'd'; };
 
 function jvmVisible(j) {
@@ -74,7 +76,8 @@ function jvmDetail(j, wide) {
       <span>collector</span><span>${esc(j.gc || '?')} · ${j.young_gcs} young, ${j.full_gcs} full</span>
       ${gens}<span>metaspace</span><span>${mb(j.meta_used)}</span>
       <span>safepoints</span><span>${pct(j.sp_pct)} of wall</span>
-      <span>JIT</span><span>${pct(j.jit_pct)} of a core</span>
+      <span>classes</span><span>${num(j.classes)} live · ${num(j.classes_loaded)} loaded, ${num(j.classes_unloaded)} unloaded${j.class_rate ? ` · ${num(j.class_rate)}/s now` : ''}${j.cls_time ? ` <span class="dim">· ${secs(j.cls_time)} loading</span>` : ''}</span>
+      <span>JIT</span><span>${num(j.compiles)} compiles${j.osr_compiles ? ` (${num(j.osr_compiles)} OSR)` : ''}${j.compile_rate ? ` · ${num(j.compile_rate)}/s now` : ''} · ${pct(j.jit_pct)} of a core${j.jit_time ? ` <span class="dim">· ${secs(j.jit_time)} compiling</span>` : ''}${j.bailouts ? ` · ${num(j.bailouts)} bailed out` : ''}${j.invalidations ? ` · ${num(j.invalidations)} invalidated` : ''}</span>
       <span>threads</span><span>${j.threads} (${j.daemon} daemon)</span>
       </div>${j.flags.length ? `<div style="margin-top:6px">${j.flags.map(f => `<div class="sub">⚠ ${esc(JVM_FLAGS[f][2])}</div>`).join('')}</div>` : ''}
       <pre title="main class and JVM options">${esc(j.main)}\n${esc(j.args)}</pre></div>
@@ -228,6 +231,7 @@ const SNAPS = [  // kind, button, what it costs the JVM
   ['threads', 'Threads', 'two thread dumps a second apart (two brief safepoints): what every thread is doing, and its CPU over that second'],
   ['heap', 'Heap', 'GC.heap_info: regions and spaces of the heap (cheap)'],
   ['histogram', 'Class histogram', 'GC.class_histogram -all: objects per class. Walks the whole heap at a safepoint: a pause about as long as a full GC'],
+  ['codecache', 'Code cache', 'Compiler.codecache: how full each code heap is (cheap; no safepoint)'],
   ['native', 'Native memory', 'VM.native_memory summary: only works when the JVM was started with -XX:NativeMemoryTracking=summary'],
 ];
 const jvmSnaps = {};  // jvm id -> {kind, loading, error, data, showIdle, open: Set}
@@ -262,7 +266,18 @@ function snapView(j) {
   const d = s.data, when = `<span class="sub">taken ${new Date(d.t * 1000).toLocaleTimeString()} in ${d.took}s</span>`;
   if (d.kind === 'threads') return `<div class="snap">${threadsView(j.id, d.dump, when)}</div>`;
   if (d.kind === 'histogram') return `<div class="snap"><div class="snaph">Class histogram · top ${d.rows.length} by size ${when}</div><table class="jt hist"><tr><th class="num">size</th><th class="num">instances</th><th>class</th></tr>${d.rows.map(([n, b, c]) => `<tr><td class="num">${mb(b)}</td><td class="num">${n.toLocaleString()}</td><td>${esc(prettyClass(c))}</td></tr>`).join('')}</table></div>`;
+  if (d.kind === 'codecache' && d.heaps?.length) return `<div class="snap"><div class="snaph">Code cache ${when}</div>${codeCacheView(d.heaps)}<details onclick="event.stopPropagation()"><summary class="sub">jcmd output</summary><pre>${esc(d.text)}</pre></details></div>`;
   return `<div class="snap"><div class="snaph">${esc(SNAPS.find(x => x[0] === d.kind)[1])} ${when}</div><pre>${esc(d.text)}</pre></div>`;
+}
+// One bar per code heap: used, with the high-water mark; the whole first when the JVM reports it
+function codeCacheView(heaps) {
+  const total = heaps.find(h => h[0] === 'CodeCache') || ['CodeCache', ...[1, 2, 3].map(i => heaps.reduce((a, h) => a + h[i], 0))];
+  const rows = [total, ...heaps.filter(h => h[0] !== 'CodeCache')];
+  return `<table class="jt"><tr><th>heap</th><th>used / size</th><th class="num">used</th><th class="num">peak</th><th class="num">size</th></tr>${rows.map(([name, size, used, peak]) => {
+    const r = used / size;
+    return `<tr><td>${name === 'CodeCache' ? '<b>total</b>' : esc(name)}</td><td><span class="hb ${r >= .9 ? 'bad' : r >= .75 ? 'warn' : ''}" style="width:140px" title="peak ${mb(peak)}"><i class="c" style="width:${Math.min(100, peak / size * 100).toFixed(1)}%"></i><i class="u" style="width:${Math.min(100, r * 100).toFixed(1)}%"></i></span></td>
+      <td class="num">${mb(used)}</td><td class="num">${mb(peak)}</td><td class="num">${mb(size)}</td></tr>`;
+  }).join('')}</table>`;
 }
 const PRIM = { B: 'byte', C: 'char', D: 'double', F: 'float', I: 'int', J: 'long', S: 'short', Z: 'boolean' };
 function prettyClass(c) {  // [B -> byte[], [Ljava.lang.String; -> java.lang.String[]

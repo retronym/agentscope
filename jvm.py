@@ -141,6 +141,10 @@ def _heap_max(c, gens, args):
     return maxes[0] if len(set(maxes)) == 1 else sum(maxes)
 
 
+def _jit_ticks(c):
+    return c.get("java.ci.totalTime", c.get("sun.ci.totalTime", 0))  # java.* since JDK 6; sun.* in some older builds
+
+
 def _is_full(name):
     return bool(re.search(r"full|MarkSweep|MSC|ParallelCompact", name or "", re.I))  # not ZGC's "major": concurrent, tiny pauses
 
@@ -160,17 +164,24 @@ def derive(c, prev, dt):
         gens=[dict(name=g[0], used=g[1], cap=g[2]) for g in gens],
         meta_used=c.get("sun.gc.metaspace.used", 0),
         threads=c.get("java.threads.live", 0), daemon=c.get("java.threads.daemon", 0),
-        classes=c.get("java.cls.loadedClasses", 0) + c.get("java.cls.sharedLoadedClasses", 0)
-        - c.get("java.cls.unloadedClasses", 0) - c.get("java.cls.sharedUnloadedClasses", 0),
+        classes_loaded=c.get("java.cls.loadedClasses", 0) + c.get("java.cls.sharedLoadedClasses", 0),
+        classes_unloaded=c.get("java.cls.unloadedClasses", 0) + c.get("java.cls.sharedUnloadedClasses", 0),
+        cls_time=round(c.get("sun.cls.time", 0) / freq, 1),  # seconds spent loading, linking and initialising classes
+        compiles=c.get("sun.ci.totalCompiles", 0), osr_compiles=c.get("sun.ci.osrCompiles", 0),
+        bailouts=c.get("sun.ci.totalBailouts", 0), invalidations=c.get("sun.ci.totalInvalidates", 0),
+        jit_time=round(_jit_ticks(c) / freq, 1),  # seconds of compiler-thread time
         gc_count=sum(n for _, n, _ in colls), young_gcs=young, full_gcs=sum(n for name, n, _ in colls if _is_full(name)),
-        _gc_ticks=sum(t for _, _, t in colls), _sp_ticks=c.get("sun.rt.safepointTime", 0), _jit_ticks=c.get("sun.ci.totalTime", 0), _eden=eden,
-        gc_pct=None, sp_pct=None, jit_pct=None, alloc=None,
+        _gc_ticks=sum(t for _, _, t in colls), _sp_ticks=c.get("sun.rt.safepointTime", 0), _jit_ticks=_jit_ticks(c), _eden=eden,
+        gc_pct=None, sp_pct=None, jit_pct=None, alloc=None, class_rate=None, compile_rate=None,
     )
+    m["classes"] = m["classes_loaded"] - m["classes_unloaded"]
     if prev and dt > 0:
         span = dt * freq / 100  # ticks in 1% of the interval
         m["gc_pct"] = round(max(0, m["_gc_ticks"] - prev["_gc_ticks"]) / span, 1)
         m["sp_pct"] = round(max(0, m["_sp_ticks"] - prev["_sp_ticks"]) / span, 1)
         m["jit_pct"] = round(max(0, m["_jit_ticks"] - prev["_jit_ticks"]) / span, 1)
+        m["class_rate"] = round(max(0, m["classes_loaded"] - prev["classes_loaded"]) / dt, 1)
+        m["compile_rate"] = round(max(0, m["compiles"] - prev["compiles"]) / dt, 1)
         if eden and prev["_eden"] and m["gc_pct"] < 50:  # when collecting most of the time, eden isn't full at each GC
             # Allocation goes to eden. Across a young GC, assume eden was filled to capacity before each collection.
             (u, cap), (pu, pcap) = eden, prev["_eden"]
@@ -340,8 +351,10 @@ SNAPSHOTS = {  # kind -> (helper op, args)
     "heap": ("jcmd", dict(cmd="GC.heap_info")),
     "histogram": ("jcmd", dict(cmd="GC.class_histogram -all")),  # -all: no full GC first, but still a heap walk at a safepoint
     "native": ("jcmd", dict(cmd="VM.native_memory summary")),
+    "codecache": ("jcmd", dict(cmd="Compiler.codecache")),  # takes the code cache lock, no safepoint
 }
 HISTO_ROW = re.compile(r"^\s*(\d+):\s+(\d+)\s+(\d+)\s+(.+?)\s*$")
+CODE_HEAP = re.compile(r"^(?:CodeHeap '([^']+)'|(CodeCache)):\s+size=(\d+)Kb,? used=(\d+)Kb,? max_used=(\d+)Kb")
 
 
 def snapshot(tracker, helper, jvm_id, kind):
@@ -362,4 +375,6 @@ def snapshot(tracker, helper, jvm_id, kind):
         out["text"] = r["out"]
         if kind == "histogram":
             out["rows"] = [[int(m[2]), int(m[3]), m[4]] for m in map(HISTO_ROW.match, r["out"].splitlines()) if m][:60]
+        elif kind == "codecache":  # [[heap, size, used, max_used]] in bytes; "CodeCache" is the whole (with segmented heaps, JDK 17+)
+            out["heaps"] = [[m[1] or m[2], int(m[3]) << 10, int(m[4]) << 10, int(m[5]) << 10] for m in map(CODE_HEAP.match, r["out"].splitlines()) if m]
     return out

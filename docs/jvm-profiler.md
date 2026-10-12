@@ -23,7 +23,7 @@ It has to stay a well-behaved guest. These JVMs are running the agents' builds, 
 | 1. **Record** | Continuous JFR via `JFR.start` with our own low-overhead `.jfc`, ring-buffered to disk | ≲1% | only while **Record** is on (below) |
 | 2. **Capture** | async-profiler for a bounded window (wall, alloc, lock, native, `--all`) | higher; loads a native agent that can't be unloaded | one JVM, on explicit click |
 
-Plus on-demand **snapshots** (`Thread.print`, `GC.heap_info`, `VM.native_memory`), each one click, each labelled with what it costs (`GC.class_histogram` forces a full GC, so it says so).
+Plus on-demand **snapshots** (`Thread.print`, `GC.heap_info`, `Compiler.codecache`, `VM.native_memory`), each one click, each labelled with what it costs (`GC.class_histogram` forces a full GC, so it says so).
 
 Why JFR for the continuous tier rather than async-profiler: `JFR.start` via jcmd is a diagnostic command, not an agent, so it leaves nothing behind in the target, whereas async-profiler's agent can't be unloaded once attached. JEP 451 also says a dynamically loaded JVMTI agent prints a warning to the *target's* stderr on JDK 21+ (for an sbt server, into the build output the agent is reading); in practice async-profiler 4.5 attaching to JDK 21.0.12 printed nothing, but that's not something to rely on across versions. JFR's sampler is good enough for "where does the time go". async-profiler stays for the questions JFR answers poorly: wall-clock across all threads, native frames, precise allocation and lock profiling.
 
