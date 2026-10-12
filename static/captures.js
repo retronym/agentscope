@@ -44,10 +44,16 @@ async function loadCaptures(jvmId, force) {
   return capLists[jvmId].rows;
 }
 
+// Without DebugNonSafepoints, code JIT-compiled before async-profiler attaches only maps back to source at safepoints,
+// so its samples land on the nearest safepoint's method and line: inlined callees and hot loops come out skewed.
+const NONSAFEPOINT_WARN = 'This JVM wasn\'t started with -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints. Code compiled before async-profiler attaches has debug info only at safepoints, so its samples are attributed to the nearest one: time can land on the wrong method (inlined callees fold into callers) or line.';
+const nonsafepointWarned = jvmId => (S.jvms || []).find(j => j.id === jvmId)?.debug_nonsafepoints === false;
+
 async function startCapture(jvmId, mode) {
   let started;
   const label = CAP_MODES.find(m => m[0] === mode)[1], opts = capOpts(), sum = capOptsSummary(opts);
-  if (!confirm(`Capture ${capSecs()} s of ${label} with async-profiler${sum ? ` (${sum})` : ''}?\n\nThis loads async-profiler's native agent into the JVM. Once loaded it stays (an agent can't be unloaded), idle between captures.`)) return;
+  if (!confirm(`Capture ${capSecs()} s of ${label} with async-profiler${sum ? ` (${sum})` : ''}?\n\nThis loads async-profiler's native agent into the JVM. Once loaded it stays (an agent can't be unloaded), idle between captures.` +
+    (nonsafepointWarned(jvmId) ? `\n\n⚠ ${NONSAFEPOINT_WARN}` : ''))) return;
   capPanel = null;
   try { started = await post('/api/jvm/capture', { id: jvmId, mode, seconds: capSecs(), opts }); }
   catch (e) { alert('Capture failed to start: ' + (e.message || e)); }
@@ -83,6 +89,7 @@ function renderCaptures(jvmId) {
       ${sum ? `<a href="#" class="sub capsum" title="settings for every capture: click to change" onclick="capPanel=capPanel||'cpu';renderCaptures(${jvmId});return false">⚙ ${esc(sum)}</a>` : ''}
       ${running ? `<span class="sub">capturing… ${clock(Math.max(0, running.started + running.seconds - Date.now() / 1000))} left</span>
         <button class="recbtn sm on" title="stop now and keep what's been captured" onclick="stopCapture(${jvmId}, ${running.id}, this)"><i></i>Stop</button>` : ''}</div>
+    ${nonsafepointWarned(jvmId) ? `<div class="capwarn sub" title="${esc(NONSAFEPOINT_WARN)}">⚠ started without <code>-XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints</code>: samples in code compiled before the capture attaches can land on the wrong method or line</div>` : ''}
     ${capPanel && !running ? capSettings(jvmId, capPanel) : ''}
     ${rows.length ? `<table class="jt caps"><tr><th>when</th><th>what</th><th>status</th><th>show</th><th></th></tr>${rows.map(r => capRow(r, rows, p)).join('')}</table>` : ''}
     ${p ? capView(open, p, rows.find(r => r.id === p.cap)) : ''}`);

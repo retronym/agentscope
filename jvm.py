@@ -145,6 +145,15 @@ def _jit_ticks(c):
     return c.get("java.ci.totalTime", c.get("sun.ci.totalTime", 0))  # java.* since JDK 6; sun.* in some older builds
 
 
+def debug_nonsafepoints(c):
+    """Whether JIT-compiled code carries debug info between safepoints, as async-profiler needs to place samples precisely.
+    Set on the command line (vmArgs includes JAVA_TOOL_OPTIONS and expanded @argfiles) or in a -XX:Flags file; the last
+    setting wins. async-profiler loaded at startup (-agentpath) turns it on before anything is compiled."""
+    flags = c.get("java.rt.vmArgs", "") + " " + c.get("java.rt.vmFlags", "")
+    m = re.findall(r"-XX:([+-])DebugNonSafepoints\b", flags)
+    return (m[-1] == "+") if m else bool(re.search(r"-agentpath:\S*asyncProfiler", flags))
+
+
 def _is_full(name):
     return bool(re.search(r"full|MarkSweep|MSC|ParallelCompact", name or "", re.I))  # not ZGC's "major": concurrent, tiny pauses
 
@@ -247,7 +256,7 @@ class JvmTracker:
                     info = dict(label=jvm_label(cmd, p["args"]), main=cmd[:300], gc=c.get("sun.gc.policy.name") or _gc_from_collectors(c),
                                 version=c.get("java.property.java.vm.version") or c.get("java.property.java.version", ""),
                                 vendor=c.get("java.property.java.vm.vendor", ""), args=c.get("java.rt.vmArgs", "")[:2000],
-                                home=c.get("java.property.java.home", ""))
+                                home=c.get("java.property.java.home", ""), debug_nonsafepoints=debug_nonsafepoints(c))
                     try:
                         info["id"] = self._identify(pid, start, info)
                     except Exception:
@@ -324,7 +333,7 @@ class JvmTracker:
                 flags.append("full")
             out.append(dict(
                 id=j["id"], pid=j["pid"], start=j["start"], label=j["label"], main=j["main"], version=j["version"], vendor=j["vendor"],
-                gc=j["gc"], args=j["args"], sid=j["sid"], how=j["how"], cpu=j["cpu"], rss=j["rss"],
+                gc=j["gc"], args=j["args"], debug_nonsafepoints=j["debug_nonsafepoints"], sid=j["sid"], how=j["how"], cpu=j["cpu"], rss=j["rss"],
                 flags=flags, spark=[[x[0], x[1], x[2], x[3]] for x in h[-60:]],
                 **{k: v for k, v in m.items() if not k.startswith("_")}))
         return sorted(out, key=lambda j: (-j["cpu"], -j["rss"]))
