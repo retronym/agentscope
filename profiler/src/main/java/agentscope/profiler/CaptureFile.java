@@ -72,7 +72,7 @@ final class CaptureFile {
     final Profile p;
     final Map<Integer, String> frameTypes, threadStates;
     final Map<Long, Integer> frames = new HashMap<>();  // (method, type, location) -> frame id
-    final Map<Integer, int[]> stacks = new HashMap<>();  // stack trace id -> [frame ids root first..., category]
+    final Map<Integer, Frames> stacks = new HashMap<>();  // stack trace id -> frames
     final Map<Long, Integer> interned = new HashMap<>();  // (stack trace id, allocated class frame) -> stack id
     final Map<Long, Integer> classes = new HashMap<>();  // class id -> "<class> [allocated]" frame id
     final Map<Integer, Integer> threads = new HashMap<>();  // tid -> thread
@@ -120,18 +120,22 @@ final class CaptureFile {
 
     int stack(int stackTraceId, int allocated) {
       return interned.computeIfAbsent((long) stackTraceId << 32 | (allocated & 0xffffffffL), k -> {
-        int[] s = stacks.computeIfAbsent(stackTraceId, this::frames);
+        Frames s = stacks.computeIfAbsent(stackTraceId, this::frames);
         if (s == null) return -1;
-        return p.internStack(java.util.Arrays.copyOf(s, s.length - 1), allocated, s[s.length - 1]);
+        return p.internStack(s.ids(), s.types(), allocated, s.category());
       });
     }
 
-    /** Frame ids, root first, then the stack's category; null for a stack the file doesn't define. */
-    int[] frames(int stackTraceId) {
+    /** Frame ids and types, root first, and the stack's category. */
+    record Frames(int[] ids, byte[] types, int category) { }
+
+    /** A stack's frames; null for a stack the file doesn't define. */
+    Frames frames(int stackTraceId) {
       StackTrace st = jfr.stackTraces.get(stackTraceId);
       if (st == null) return null;
       int n = st.methods.length;
-      int[] ids = new int[n + 1];
+      int[] ids = new int[n];
+      byte[] types = new byte[n];
       String[] names = new String[n];
       for (int i = 0; i < n; i++) {
         MethodRef m = jfr.methods.get(st.methods[i]);
@@ -142,12 +146,12 @@ final class CaptureFile {
         names[i] = java && !owner.isEmpty() ? (method.isEmpty() ? owner : owner + "." + method) : method;
         int loc = st.locations == null ? 0 : st.locations[i];
         long key = st.methods[i] * 8 + type;
+        types[n - 1 - i] = type >= 0 && type < Profile.FRAME_TYPES.size() ? type : -1;
         ids[n - 1 - i] = p.detail().isEmpty()
             ? frames.computeIfAbsent(key, x -> p.frame(Profile.frameName(owner, method, frameTypes.getOrDefault((int) type, "?"), -1, -1, "")))
             : p.frame(Profile.frameName(owner, method, frameTypes.getOrDefault((int) type, "?"), loc >>> 16, loc & 0xffff, p.detail()));
       }
-      ids[n] = p.category(Classify.category(names, st.types));
-      return ids;
+      return new Frames(ids, types, p.category(Classify.category(names, st.types)));
     }
 
     String className(long classId) {

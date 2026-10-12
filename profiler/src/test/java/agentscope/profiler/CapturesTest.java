@@ -33,6 +33,10 @@ class CapturesTest {
       assertFalse(flame.contains("libsystem_kernel.dylib.") || flame.contains("libjvm.dylib."), "library names aren't classes: " + flame);
       assertTrue(flame.contains(" [Native]") || flame.contains(" [C++]"), flame);
       assertTrue(flame.contains("agentscope.profiler.Fixture"), flame);
+      // async-profiler's frame types: C2 by name, and native frames typed as their names say
+      Map<String, Object> typed = prof.flame(0, Long.MAX_VALUE, "wall", List.of(), 0.001, false);
+      assertEquals("C2 compiled", ((List<String>) typed.get("frame_types")).get(1));
+      assertTrue(typed.toString().matches("(?s).*\\[C\\+\\+\\], \\d+, \\[.*?], 0, \\[0, 0, 0, 0, \\d+].*"), "a C++ frame, all C++: " + typed);
       // a capture diffed against itself: every node unchanged
       Map<String, Object> d = Profile.diff(prof, prof, "wall", false, 0.001);
       List<Object> root = (List<Object>) d.get("root");

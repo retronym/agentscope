@@ -35,6 +35,10 @@ public final class Profile {
   private final List<String> frames = new ArrayList<>();
   private final Map<StackKey, Integer> stackIds = new HashMap<>();
   private final List<int[]> stacks = new ArrayList<>();  // frame ids, root first
+  // Each frame's type (FRAME_TYPES' index: interpreted, compiled, inlined...), parallel to its stack's ids, or -1 when
+  // unknown. Part of a stack's identity: the same method is interpreted in one sample and inlined in the next, while
+  // frame names (what everything else compares) don't say.
+  private final List<byte[]> stackTypes = new ArrayList<>();
   // For allocation samples, the class allocated: a frame id ("byte[] [allocated]"), or -1. Part of a stack's identity,
   // so stacks that differ only in what they allocate are separate ids with the same frames; flame() can show it as the
   // top frame, and everything else (activities, minutes, diffs) ignores it.
@@ -175,20 +179,37 @@ public final class Profile {
     if (st == null) return -1;
     List<RecordedFrame> fs = st.getFrames();
     int[] ids = new int[fs.size() + (st.isTruncated() ? 1 : 0)];
+    byte[] types = new byte[ids.length];
     int k = 0;
-    if (st.isTruncated()) ids[k++] = frame("…");
-    for (int j = fs.size() - 1; j >= 0; j--) ids[k++] = frame(fs.get(j));  // JFR is leaf first; we keep root first
-    return internStack(ids, allocated, -1);
+    if (st.isTruncated()) { types[k] = -1; ids[k++] = frame("…"); }
+    for (int j = fs.size() - 1; j >= 0; j--) {  // JFR is leaf first; we keep root first
+      types[k] = frameType(fs.get(j).getType());
+      ids[k++] = frame(fs.get(j));
+    }
+    return internStack(ids, types, allocated, -1);
   }
 
-  /** {@code ids}: frame ids, root first (kept, not copied); {@code allocated}, {@code category}: frame ids, or -1. */
-  int internStack(int[] ids, int allocated, int category) {
-    StackKey key = new StackKey(ids, allocated, category);  // the frames themselves, not a copy: deep stacks are most of the memory
+  /**
+   * Frame types, by the codes async-profiler uses in its recordings (so {@link CaptureFile}'s are used as they are):
+   * HotSpot's own JFR says "JIT compiled" for C1 and C2 alike, async-profiler's means C2, with C1 apart.
+   */
+  static final List<String> FRAME_TYPES = List.of("Interpreted", "JIT compiled", "Inlined", "Native", "C++", "Kernel", "C1 compiled");
+
+  /** A JFR frame type's code in {@link #FRAME_TYPES}, or -1. */
+  static byte frameType(String type) {
+    if ("C2 compiled".equals(type)) return 1;
+    return (byte) FRAME_TYPES.indexOf(type);
+  }
+
+  /** {@code ids}: frame ids, root first, and {@code types}, theirs (both kept, not copied); {@code allocated}, {@code category}: frame ids, or -1. */
+  int internStack(int[] ids, byte[] types, int allocated, int category) {
+    StackKey key = new StackKey(ids, types, allocated, category);  // the frames themselves, not a copy: deep stacks are most of the memory
     Integer id = stackIds.get(key);
     if (id == null) {
       id = stacks.size();
       stackIds.put(key, id);
       stacks.add(ids);
+      stackTypes.add(types);
       stackClass.add(allocated);
       stackCategory.add(category);
     }
@@ -419,12 +440,15 @@ public final class Profile {
       if (s < 0) continue;
       Node cur = root;
       int[] st = stacks.get(s);
+      byte[] ty = stackTypes.get(s);
       int cls = classes ? stackClass.get(s) : -1, cat = categories ? stackCategory.get(s) : -1;
       if (cat >= 0) (cur = cur.child(cat)).value += w;
       if (cls >= 0 && reverse) (cur = cur.child(cls)).value += w;
       for (int k = 0; k < st.length; k++) {
-        cur = cur.child(st[reverse ? st.length - 1 - k : k]);
+        int j = reverse ? st.length - 1 - k : k;
+        cur = cur.child(st[j]);
         cur.value += w;
+        cur.typed(ty[j], w);
       }
       if (cls >= 0 && !reverse) (cur = cur.child(cls)).value += w;
     }
@@ -434,6 +458,8 @@ public final class Profile {
     out.put("total", total);
     out.put("samples", n);
     if (capture) out.put("wait_us", true);
+    // what each node's types (the fifth element) count, by code; async-profiler's "JIT compiled" is C2
+    out.put("frame_types", capture ? FRAME_TYPES.stream().map(x -> x.equals("JIT compiled") ? "C2 compiled" : x).toList() : FRAME_TYPES);
     long min = Math.max(1, (long) (total * minShare)), at = path.isEmpty() ? -1 : root.valueAt(frames, path);
     out.put("root", root.toJson(frames, labelFrames, min, "all", path, 0, false, at > 0 ? Math.max(1, (long) (at * minShare)) : min));
     if (!path.isEmpty()) out.put("path", path);
@@ -730,9 +756,16 @@ public final class Profile {
   private static final class Node {
     final int frame;
     long value;
+    long[] types;  // weight by frame type (FRAME_TYPES' codes), when known
     Map<Integer, Node> kids;
 
     Node(int frame) { this.frame = frame; }
+
+    void typed(byte type, long w) {
+      if (type < 0) return;
+      if (types == null) types = new long[FRAME_TYPES.size()];
+      types[type] += w;
+    }
 
     Node child(int f) {
       if (kids == null) kids = new HashMap<>(4);
@@ -760,7 +793,13 @@ public final class Profile {
           if (k.value >= (inside || onPath ? minPath : min)) kidsOut.add(k.toJson(frames, labels, min, kn, path, depth + 1, in, minPath));
         }
       }
-      return labels.contains(frame) ? List.of(name, value, kidsOut, 1) : List.of(name, value, kidsOut);  // 1: a label, not a frame
+      if (labels.contains(frame)) return List.of(name, value, kidsOut, 1);  // 1: a label, not a frame
+      if (types == null) return List.of(name, value, kidsOut);
+      int n = types.length;
+      while (n > 0 && types[n - 1] == 0) n--;
+      List<Long> ts = new ArrayList<>(n);
+      for (int i = 0; i < n; i++) ts.add(types[i]);
+      return List.of(name, value, kidsOut, 0, ts);  // [.., 0: a frame, weight by type]
     }
 
     /** The value of the node at a path of frame names below this one, or -1. */
@@ -776,9 +815,11 @@ public final class Profile {
     }
   }
 
-  private record StackKey(int[] a, int allocated, int category) {
-    @Override public boolean equals(Object o) { return o instanceof StackKey x && allocated == x.allocated && category == x.category && Arrays.equals(a, x.a); }
-    @Override public int hashCode() { return (Arrays.hashCode(a) * 31 + allocated) * 31 + category; }
+  private record StackKey(int[] a, byte[] types, int allocated, int category) {
+    @Override public boolean equals(Object o) {
+      return o instanceof StackKey x && allocated == x.allocated && category == x.category && Arrays.equals(a, x.a) && Arrays.equals(types, x.types);
+    }
+    @Override public int hashCode() { return ((Arrays.hashCode(a) * 31 + Arrays.hashCode(types)) * 31 + allocated) * 31 + category; }
   }
 
   /** Parallel arrays with a moving start: append at the end, drop from the front. */

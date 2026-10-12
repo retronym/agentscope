@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -35,6 +36,10 @@ class RecordingsTest {
       Map<String, Object> flame = p.flame(t0, Long.MAX_VALUE, "cpu", List.of((Long) top.get("tid")), 0.002, false);
       assertTrue((long) flame.get("samples") > 50, flame.toString());
       assertTrue(flame.toString().contains("agentscope.profiler.Fixture.lambda$main$"), flame.toString());
+      // every frame says how its weight ran: all of it, by type; a spinning thread's is compiled by now
+      long[] byType = new long[Profile.FRAME_TYPES.size()];
+      typesAddUp((List<Object>) flame.get("root"), byType);
+      assertTrue(byType[1] + byType[2] > 0, "JIT compiled or inlined: " + Arrays.toString(byType));
       // a coarse threshold hides detail; zooming along a path brings it back below that path
       Map<String, Object> coarse = p.flame(t0, Long.MAX_VALUE, "cpu", List.of((Long) top.get("tid")), 0.5, false);
       List<Object> cr = (List<Object>) coarse.get("root");
@@ -75,6 +80,17 @@ class RecordingsTest {
       assertEquals(true, again.start(f.pid()).get("adopted"));
       assertTrue(String.valueOf(recs.stop(f.pid()).get("result")).contains("Stopped recording"));
       again.stop(f.pid());
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void typesAddUp(List<Object> n, long[] byType) {
+    for (List<Object> k : (List<List<Object>>) n.get(2)) {
+      assertEquals(5, k.size(), "a frame with types: " + k.get(0));
+      List<Long> ts = (List<Long>) k.get(4);
+      assertEquals(k.get(1), ts.stream().mapToLong(Long::longValue).sum(), "types of " + k.get(0));
+      for (int i = 0; i < ts.size(); i++) byType[i] += ts.get(i);
+      typesAddUp(k, byType);
     }
   }
 }

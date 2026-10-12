@@ -4,14 +4,26 @@
 //   cursor, +/−, Shift+drag a range, Shift+scroll to pan), search (regex/case, N/Shift+N), highlight chips, and a stack
 //   of filters (keep, hide, hide one stack, merge a function away, focus on a function), each removable, all re-applied
 //   to the original data. Right-click a frame for every action; ? for the keys.
+// Frame types (interpreted, C1, C2, inlined, native...), when the server knows them: a thin strip along the bottom of each
+//   frame, split by how much of its weight ran as each type, spelled out in the tooltip; the legend highlights a type.
 // Uses the page's globals (esc, tip, hideTip, css) and profile.js's (frameColor, shortName).
 
 const Flame = (() => {
   const ROW = 17, SEARCH_COLOR = '#ff6fae', HL_COLORS = ['#f2c94c', '#56ccf2', '#bb6bd9', '#6fcf97', '#f2994a', '#eb5757', '#2d9cdb', '#9b51e0'];
   const views = {};  // key -> view state
+  // Frame types by the server's codes (its frame_types names them): a colour and a short name each. Interpreted is the
+  // loud one, it's the one to notice; compiled code is calm.
+  const TYPE_STYLE = [['#e5484d', 'interpreted'], ['#30a46c', 'JIT'], ['#3e8ed0', 'inlined'], ['#8e4ec6', 'native'], ['#8b8d98', 'C++'], ['#3a3a3f', 'kernel'], ['#f5a623', 'C1']];
+  let showTypes = true;
+  try { showTypes = localStorage.getItem('fg-types') !== '0'; } catch (e) { }
 
-  // ---------------------------------------------------------------- trees: {n, v, b, k, m}: name, value, value before (diffs), kids, label level
-  const fromArr = a => ({ n: a[0], v: a[1], k: (a[2] || []).map(fromArr), m: a.length > 3 && a[3] === 1, b: a.length > 4 ? a[4] : undefined });
+  // ---------------------------------------------------------------- trees: {n, v, b, t, k, m}: name, value, value before (diffs),
+  // weight by frame type (not diffs), kids, label level. Filters keep a frame's types as they were: shares, near enough.
+  const fromArr = (a, diff) => ({ n: a[0], v: a[1], k: (a[2] || []).map(c => fromArr(c, diff)), m: a.length > 3 && a[3] === 1,
+    b: diff && a.length > 4 ? a[4] : undefined, t: !diff && a.length > 4 ? a[4] : undefined });
+  const addTypes = (x, y) => { if (!y) return x; const o = (x || []).slice(); y.forEach((w, i) => o[i] = (o[i] || 0) + w); return o; };
+  // the type with most of a frame's weight, if it has types
+  const dominant = n => { let best = -1; n.t?.forEach((w, i) => { if (w > 0 && (best < 0 || w > n.t[best])) best = i; }); return best; };
   const sum = (ks, f) => ks.reduce((s, c) => s + (f(c) || 0), 0);
   const clone = n => ({ ...n, k: n.k.map(clone) });
 
@@ -21,7 +33,7 @@ const Flame = (() => {
       const key = c.n + (c.m ? '\u0001' : '');
       const o = by.get(key);
       if (!o) by.set(key, { ...c, k: c.k.slice() });
-      else { o.v += c.v; if (c.b !== undefined) o.b = (o.b || 0) + c.b; o.k = o.k.concat(c.k); }
+      else { o.v += c.v; if (c.b !== undefined) o.b = (o.b || 0) + c.b; o.t = addTypes(o.t, c.t); o.k = o.k.concat(c.k); }
     }
     const out = [...by.values()];
     for (const o of out) o.k = mergeSiblings(o.k);
@@ -114,7 +126,7 @@ const Flame = (() => {
   function show(key, el, data, opts) {
     const v = view(key);
     v.opts = opts;
-    if (v.data !== data) { v.data = data; v.base = fromArr(data.root); v.diff = !!data.diff; v.total = data.total; v.beforeTotal = data.before_total; v.loading = false; apply(v); }
+    if (v.data !== data) { v.data = data; v.base = fromArr(data.root, !!data.diff); v.typeNames = data.frame_types; v.diff = !!data.diff; v.total = data.total; v.beforeTotal = data.before_total; v.loading = false; apply(v); }
     if (el.dataset.fg !== key || !el.querySelector('canvas')) mount(v, el);
     v.el = el;
     el.classList.toggle('fg-loading', !!v.loading);
@@ -152,6 +164,7 @@ const Flame = (() => {
         <button data-act="z1" ${v.zf === 1 && !v.path.length ? 'disabled' : ''} title="reset zoom (0)">1:1</button></span>
       <button class="fg-t" data-act="flip" title="flip: icicle (root on top) or flame (root at the bottom) (I)">${v.icicle ? '⬇' : '⬆'}</button>
       <button class="fg-t ${v.longNames ? 'on' : ''}" data-act="names" title="full class names">pkg</button>
+      ${hasTypes(v) ? `<button class="fg-t fg-types ${showTypes ? 'on' : ''}" data-act="types" title="frame types: a strip under each frame, how much of it ran interpreted, C1, C2/JIT, inlined, native… (J)">${TYPE_STYLE.slice(0, 3).map(s => `<i style="--c:${s[0]}"></i>`).join('')}types</button>` : ''}
       <button class="fg-t" data-act="help" title="keys and gestures (?)">?</button>`;
     const barEl = el.querySelector('.fg-bar');
     const active = document.activeElement, typing = active && barEl.contains(active) && active.tagName === 'INPUT';
@@ -162,7 +175,8 @@ const Flame = (() => {
     wireBar(v, barEl);
     const chips = [...v.ops.map((op, i) => `<span class="fg-chip fg-op"><b>${op.op === 'hidepath' ? 'hide stack' : op.op}</b> ${esc(op.label)}<a data-act="unop" data-arg="${i}" title="remove this filter">×</a></span>`),
       ...v.hl.map((h, i) => `<span class="fg-chip" style="--c:${h.color}"><i></i>${esc(h.label)}<a data-act="unhl" data-arg="${i}" title="remove highlight">×</a></span>`)];
-    const chipHtml = chips.length ? chips.join('') + (v.ops.length ? `<button class="btn-link" data-act="restore" title="remove every filter">Restore all</button>` : '') : '';
+    const chipHtml = (chips.length ? chips.join('') + (v.ops.length ? `<button class="btn-link" data-act="restore" title="remove every filter">Restore all</button>` : '') : '')
+      + (hasTypes(v) && showTypes ? legend(v) : '');
     const ch = el.querySelector('.fg-chips');
     if (ch.dataset.html !== chipHtml) { ch.innerHTML = chipHtml; ch.dataset.html = chipHtml; }
     ch.hidden = !chipHtml;
@@ -174,6 +188,15 @@ const Flame = (() => {
     const pop = el.querySelector('.fg-pop');
     pop.hidden = !v.help;
     if (v.help && !pop.dataset.html) { pop.innerHTML = HELP; pop.dataset.html = 1; }
+  }
+  // which types this graph has, for the legend: each one highlights the frames that are mostly it
+  function hasTypes(v) { return !!v.typeNames && !v.diff; }
+  function typeName(v, i) { return v.typeNames?.[i] || TYPE_STYLE[i]?.[1] || '?'; }
+  function legend(v) {
+    const seen = new Set();
+    (function walk(n) { n.t?.forEach((w, i) => { if (w > 0) seen.add(i); }); n.k.forEach(walk); })(v.tree);
+    if (!seen.size) return '';
+    return `<span class="fg-legend">${[...seen].sort((a, b) => a - b).map(i => `<a data-act="hltype" data-arg="${i}" style="--c:${TYPE_STYLE[i][0]}" title="highlight frames mostly ${esc(typeName(v, i))}"><i></i>${esc(typeName(v, i))}</a>`).join('')}</span>`;
   }
   function wireBar(v, barEl) {
     barEl.onclick = e => { const a = e.target.closest('[data-act]'); if (a) { e.preventDefault(); act(v, a.dataset.act, a.dataset.arg); } };
@@ -191,7 +214,7 @@ const Flame = (() => {
     <dt>Ctrl/⌘+scroll, pinch</dt><dd>zoom at the cursor</dd><dt>Shift+scroll</dt><dd>pan when zoomed</dd>
     <dt>= / −</dt><dd>zoom in / out</dd><dt>0</dt><dd>reset zoom</dd><dt>Backspace</dt><dd>up one level</dd>
     <dt>⌘F or /</dt><dd>search (regex with .*)</dd><dt>Enter</dt><dd>keep the search as a highlight; Shift+Enter: keep only matches</dd>
-    <dt>N / Shift+N</dt><dd>next / previous match</dd><dt>I</dt><dd>flip icicle / flame</dd><dt>Esc</dt><dd>close search or this help</dd></dl>`;
+    <dt>N / Shift+N</dt><dd>next / previous match</dd><dt>I</dt><dd>flip icicle / flame</dd><dt>J</dt><dd>frame types (interpreted, C1, C2, inlined, native…) on / off</dd><dt>Esc</dt><dd>close search or this help</dd></dl>`;
 
   function act(v, a, arg) {
     const term = v.search;
@@ -211,6 +234,12 @@ const Flame = (() => {
       case 'zpath': zoomTo(v, v.path.slice(0, +arg)); break;
       case 'flip': v.icicle = !v.icicle; break;
       case 'names': v.longNames = !v.longNames; break;
+      case 'types':  // for every graph on the page: it's how you like to read them
+        showTypes = !showTypes;
+        try { localStorage.setItem('fg-types', showTypes ? '1' : '0'); } catch (e) { }
+        for (const o of Object.values(views)) if (o !== v && o.el && document.contains(o.el)) { toolbar(o); draw(o); }
+        break;
+      case 'hltype': { const i = +arg; v.hl.push({ label: 'mostly ' + typeName(v, i), test: n => dominant(n) === i, color: HL_COLORS[v.hl.length % HL_COLORS.length] }); break; }
       case 'help': v.help = !v.help; break;
     }
     toolbar(v); draw(v);
@@ -280,7 +309,14 @@ const Flame = (() => {
     g.font = '11px ' + css('--font-ui'); g.textBaseline = 'middle';
     const dark = matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
     const yOf = row => v.icicle ? row * ROW : H - (row + 1) * ROW;
-    const st = searchTest(v), hls = v.hl, dimming = !!(st || hls.length);
+    const st = searchTest(v), hls = v.hl, dimming = !!(st || hls.length), types = showTypes && hasTypes(v);
+    // a frame's types: segments along its bottom edge, in code order, as wide as their share of its weight
+    const strip = (n, x, y, w) => {
+      const tot = sum(n.t, t => t); if (!tot) return;
+      const sy = y + ROW - 4, ww = Math.max(0.5, w - 0.5);
+      let sx = x;
+      n.t.forEach((t, i) => { if (!t) return; const sw = ww * t / tot; g.fillStyle = TYPE_STYLE[i][0]; g.fillRect(sx, sy, sw, 3); sx += sw; });
+    };
     v.rects = [];
     // A match takes its highlight's colour; frames beneath a match keep their own colour but aren't dimmed (they're
     // part of the matched stacks); everything else dims while a search or highlight is active.
@@ -296,6 +332,7 @@ const Flame = (() => {
       g.fillRect(x, y, Math.max(0.5, w - 0.5), ROW - 1);
       g.globalAlpha = 1;
       if (w > 28) { g.fillStyle = '#1b1b1a'; g.fillText(fit(g, n === v.tree ? 'all' : n.m ? n.n : label(v, n.n), w - 6), x + 3, y + ROW / 2); }
+      if (types && n.t && w >= 2) strip(n, x, y, w);
       v.rects.push([x, y, w, n, row]);
       return !!own || underMatch;
     };
@@ -345,7 +382,13 @@ const Flame = (() => {
       <div class="tm">${esc(u(n.v))} · ${pc(n.v, v.base.v)} of all${v.root !== v.tree ? ` · ${pc(n.v, v.root.v)} of view` : ''}${parent ? ` · ${pc(n.v, parent.v)} of parent` : ''}</div>
       ${self > 0 && n.k.length ? `<div class="tm">self ${esc(u(self))}</div>` : ''}
       ${v.diff ? `<div class="tm">before: ${esc(u(n.b || 0))} · ${pc(n.b || 0, v.beforeTotal)} of all</div>` : ''}
+      ${hasTypes(v) && n.t ? typesTip(v, n) : ''}
       <div class="tm" style="margin-top:3px">click: zoom · right-click: more</div>`);
+  }
+  function typesTip(v, n) {
+    const tot = sum(n.t, t => t); if (!tot) return '';
+    const parts = n.t.map((w, i) => [w, i]).filter(x => x[0] > 0).sort((a, b) => b[0] - a[0]);
+    return `<div class="tm fg-ttypes">${parts.map(([w, i]) => `<span><i style="--c:${TYPE_STYLE[i][0]}"></i>${esc(typeName(v, i))} ${(w / tot * 100).toFixed(w / tot < 0.1 ? 1 : 0)}%</span>`).join('')}</div>`;
   }
   function findParent(v, target) {
     let found = null;
@@ -437,6 +480,7 @@ const Flame = (() => {
     else if (k === 'n') step(v, 1);
     else if (k === 'N') step(v, -1);
     else if (k === 'i' || k === 'I') act(v, 'flip');
+    else if ((k === 'j' || k === 'J') && hasTypes(v)) act(v, 'types');
     else if (k === '?') act(v, 'help');
     else if (k === 'Escape' && (v.help || menuEl)) { v.help = false; closeMenu(); toolbar(v); }
     else return;
