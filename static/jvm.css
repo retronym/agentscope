@@ -192,3 +192,14 @@ a.capsum { text-decoration: none; font-family: var(--font-mono); }
 .split > .caret { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; margin-left: 0; padding: 0 7px; height: auto; }
 .profh.sm { font-size: 11.5px; margin: 2px 0; color: var(--ink-2); }
 .jflag.gone { border-color: var(--border); color: var(--muted); }
+/* copy buttons: quiet until hovered */
+.cpy { display: inline-block; vertical-align: middle; width: 18px; height: 18px; padding: 0; margin: 0 2px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); font-size: 12px; line-height: 16px; cursor: pointer; opacity: .55; }
+.cpy:hover, .cpy:focus-visible { opacity: 1; color: var(--ink); border-color: var(--border); background: var(--surface); }
+.cpy.ok { opacity: 1; color: var(--s3); }
+h2 .cpy { font-size: 13px; }
+.cpy.lab { width: auto; padding: 0 6px; font-size: 11.5px; opacity: .8; border-color: var(--border); white-space: nowrap; }
+.cpyrow { display: flex; gap: 2px 4px; align-items: center; margin-top: 4px; font-size: 11px; }
+.cpyrow .cpy + .sub { margin-right: 10px; }
+tr.jr .cpy { opacity: 0; }
+tr.jr:hover .cpy { opacity: .55; }
+tr.jr .cpy:hover, tr.jr .cpy.ok { opacity: 1; }

@@ -50,7 +50,7 @@ function jvmRows(list, withSession, inline) {
     const who = withSession ? `<td class="who">${s ? `<a href="#" onclick="event.stopPropagation();openDrawer('${s.sid}');return false" style="text-decoration:none"><span class="lane-chip">${esc(s.lane)}</span> ${esc(s.title)}</a>${j.how && j.how !== 'tree' ? ` <span class="sub" title="attributed by ${esc(j.how)}">⌁</span>` : ''}` : '<span class="dim">no session</span>'}</td>` : '';
     return `<tr class="jr ${open ? 'open' : ''}" data-jvm="${j.id}" onclick="${inline ? 'toggleJvm' : 'openJvmBox'}(${j.id})" title="${esc(j.main || '')}">
       <td class="rec">${recToggle(j)}</td>
-      <td>${jvmLink(j)} <span class="sub">${j.pid}</span><div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div>${activityLine(j) ? `<div class="jact">${activityLine(j, 2)}</div>` : ''}</td>${who}
+      <td>${jvmLink(j)} <span class="sub">${j.pid}</span>${copyBtn(j.pid, 'the pid')}<div class="sub">${esc(j.version.split('+')[0])} · ${esc(j.gc || '?')}</div>${activityLine(j) ? `<div class="jact">${activityLine(j, 2)}</div>` : ''}</td>${who}
       <td class="num">${uptime(j.start)}</td>
       <td class="num">${cores(j.cpu)} ${jvmSpark(j, 1, 'var(--s1)', 56, 16, 100)}</td>
       <td>${heapBar(j)} <span class="sub">${mb(j.heap_used)} / ${mb(j.heap_max)}</span></td>
@@ -67,11 +67,36 @@ function jvmTable(list, withSession, inline = true) {
   return `<table class="jt"><tr><th class="rec">${recAllToggle()}</th><th>JVM</th>${withSession ? '<th>session</th>' : ''}<th class="num">up</th><th class="num">CPU (cores)</th><th>heap used / max</th><th class="num" title="share of wall time in GC pauses">GC</th><th class="num" title="estimated from eden turnover">alloc ≈</th><th class="num">threads</th><th class="num">classes</th><th></th><th></th></tr>${jvmRows(list, withSession, inline)}</table>`;
 }
 
+// Copy buttons: a small ⧉ that copies its data-copy text (or, for big text, what copyOf builds on click), ✓ when done
+const copyBtn = (text, what) => `<button class="cpy" title="copy ${esc(what)}" data-copy="${esc(text)}" onclick="event.stopPropagation();copyText(this)">⧉</button>`;
+const copyFnBtn = (expr, what, label) => `<button class="cpy${label ? ' lab' : ''}" title="copy ${esc(what)}" onclick="event.stopPropagation();copyText(this, ${esc(expr)})">⧉${label ? ' ' + esc(label) : ''}</button>`;
+function copyText(b, text = b.dataset.copy) {
+  const was = b.textContent, show = (t, ok) => { b.textContent = t; b.classList.toggle('ok', ok); setTimeout(() => { b.textContent = was; b.classList.remove('ok'); }, 1200); };
+  const legacy = () => {  // where the async clipboard is refused (embedded browsers, plain http on another host)
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    try { return document.execCommand('copy'); } catch (e) { return false; } finally { ta.remove(); }
+  };
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => true, legacy)
+    .then(ok => ok ? show(was.replace('⧉', '✓'), true) : show(was.replace('⧉', '✕'), false));
+}
+// The command line, as near as the JVM says: its options, then the main class (or -jar) and arguments. The classpath
+// isn't among the options (it's java.class.path), and both parts are as the JVM joined them, without shell quoting.
+// (A JVM started with -jar names the jar where the main class would be.)
+const javaCommand = j => ['java', j.args, /^\S+\.jar(\s|$)/.test(j.main || '') ? '-jar ' + j.main : j.main].filter(Boolean).join(' ');
+const cmdCopy = j => `<div class="cpyrow">${copyBtn(javaCommand(j), 'the command line: java, its options, main class and arguments (no classpath, not shell-quoted)')}<span class="sub">command line</span>
+  ${j.args ? `${copyBtn(j.args, 'the JVM options')}<span class="sub">JVM options</span>` : ''}</div>`;
+// A thread as jstack prints it, for pasting
+const jstackText = t => `"${t.name}"${t.daemon ? ' daemon' : ''}${t.status ? ' ' + t.status : ''}\n${t.state ? `   java.lang.Thread.State: ${t.state}\n` : ''}` + t.frames.map(f => `\tat ${f.text}\n` + f.locks.map(l => `\t- ${l}\n`).join('')).join('')
+  + (t.synchronizers.length ? `\n   Locked ownable synchronizers:\n${t.synchronizers.map(x => `\t- ${x}\n`).join('')}` : '');
+const dumpText = id => { const d = jvmSnaps[id]?.data?.dump; return d ? d.threads.map(jstackText).join('\n') + (d.deadlocks.length ? '\n' + d.deadlocks.join('\n\n') : '') : ''; };
+
 function jvmDetail(j, wide) {
   const gens = j.gens.map(g => `<span>${esc(g.name)}</span><span>${mb(g.used)} <span class="dim">of ${mb(g.cap)}</span></span>`).join('');
   const h = jvmHistCache[j.id];
   return `<div class="jdet"><div><div class="kv">
-      <span>pid</span><span>${j.pid} · up since ${new Date(j.start * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+      <span>pid</span><span>${j.pid} ${copyBtn(j.pid, 'the pid')} · up since ${new Date(j.start * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</span>
       <span>JVM</span><span>${esc(j.version)} ${esc(j.vendor || '')}</span>
       <span>collector</span><span>${esc(j.gc || '?')} · ${j.young_gcs} young, ${j.full_gcs} full</span>
       ${gens}<span>metaspace</span><span>${mb(j.meta_used)}</span>
@@ -80,7 +105,7 @@ function jvmDetail(j, wide) {
       <span>JIT</span><span>${num(j.compiles)} compiles${j.osr_compiles ? ` (${num(j.osr_compiles)} OSR)` : ''}${j.compile_rate ? ` · ${num(j.compile_rate)}/s now` : ''} · ${pct(j.jit_pct)} of a core${j.jit_time ? ` <span class="dim">· ${secs(j.jit_time)} compiling</span>` : ''}${j.bailouts ? ` · ${num(j.bailouts)} bailed out` : ''}${j.invalidations ? ` · ${num(j.invalidations)} invalidated` : ''}</span>
       <span>threads</span><span>${j.threads} (${j.daemon} daemon)</span>
       </div>${j.flags.length ? `<div style="margin-top:6px">${j.flags.map(f => `<div class="sub">⚠ ${esc(JVM_FLAGS[f][2])}</div>`).join('')}</div>` : ''}
-      <pre title="main class and JVM options">${esc(j.main)}\n${esc(j.args)}</pre></div>
+      <pre title="main class and JVM options">${esc(j.main)}\n${esc(j.args)}</pre>${cmdCopy(j)}</div>
     <div id="jh-${j.id}" data-wide="${wide ? 1 : ''}">${h ? jvmChart(h.rows, wide) : '<div class="empty">loading history…</div>'}</div></div>
     ${snapBar(j)}${snapView(j)}`;
 }
@@ -166,7 +191,7 @@ function renderJvmBox() {
   // a JVM that exited still has its captures, and its recorded profile while the helper holds it
   if (!j) { renderExitedBox(box, boxId); return; }
   const s = j.sid && S.sMap[j.sid];
-  patch(body, `<div class="jbox-head"><h2>☕ ${esc(j.label)} <span class="sub">${j.pid}</span></h2>
+  patch(body, `<div class="jbox-head"><h2>☕ ${esc(j.label)} <span class="sub">${j.pid}</span>${copyBtn(j.pid, 'the pid')}</h2>
       <div class="row">${s ? `<a href="#" class="lane-chip" onclick="closeJvmBox();openDrawer('${s.sid}');return false">${esc(s.lane)} · ${esc(s.title)}</a>` : '<span class="dim">no session</span>'}
         <span class="sub">${esc(j.version)} · ${esc(j.gc || '?')} · up ${uptime(j.start)}</span>${jvmFlags(j)}</div>
       <div class="jbox-stats"><span><b>${cores(j.cpu)}</b> cores ${jvmSpark(j, 1, 'var(--s1)', 80, 18, 100)}</span><span>${heapBar(j, 140)} <b>${mb(j.heap_used)}</b> / ${mb(j.heap_max)} heap</span>
@@ -189,12 +214,12 @@ async function renderExitedBox(box, id) {
   const i = e.info, s = i.sid && S.sMap[i.sid];
   // an exited JVM, shaped enough like a live one for the profile section
   const j = { id: i.id, pid: i.pid, label: i.label, version: i.version || '', gc: i.gc, start: i.start, exited: i.last };
-  patch(body, `<div class="jbox-head"><h2>☕ ${esc(i.label)} <span class="sub">${i.pid}</span> <span class="jflag gone">exited</span></h2>
+  patch(body, `<div class="jbox-head"><h2>☕ ${esc(i.label)} <span class="sub">${i.pid}</span>${copyBtn(i.pid, 'the pid')} <span class="jflag gone">exited</span></h2>
       <div class="row">${s ? `<a href="#" class="lane-chip" onclick="closeJvmBox();openDrawer('${s.sid}');return false">${esc(s.lane)} · ${esc(s.title)}</a>` : '<span class="dim">no session</span>'}
         <span class="sub">${esc(i.version || '')} · ${esc(i.gc || '?')} · ran ${new Date(i.start * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} – ${new Date(i.last * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</span></div></div>`);
   const r = recState().jvms[id];
   patch(box.querySelector('.jbox-prof'), r?.since ? profileSection(j) : '');
-  patch(box.querySelector('.jbox-detail'), `<div class="profh"><b>Details</b></div><div><pre title="main class and JVM options">${esc(i.main || '')}\n${esc(i.args || '')}</pre></div>`);
+  patch(box.querySelector('.jbox-detail'), `<div class="profh"><b>Details</b></div><div><pre title="main class and JVM options">${esc(i.main || '')}\n${esc(i.args || '')}</pre>${cmdCopy(i)}</div>`);
   if (r?.since && !folded('jbox-prof')) loadProfile(id);
   renderCaptures(id);
   loadCaptures(id);
@@ -266,8 +291,8 @@ function snapView(j) {
   const d = s.data, when = `<span class="sub">taken ${new Date(d.t * 1000).toLocaleTimeString()} in ${d.took}s</span>`;
   if (d.kind === 'threads') return `<div class="snap">${threadsView(j.id, d.dump, when)}</div>`;
   if (d.kind === 'histogram') return `<div class="snap"><div class="snaph">Class histogram · top ${d.rows.length} by size ${when}</div><table class="jt hist"><tr><th class="num">size</th><th class="num">instances</th><th>class</th></tr>${d.rows.map(([n, b, c]) => `<tr><td class="num">${mb(b)}</td><td class="num">${n.toLocaleString()}</td><td>${esc(prettyClass(c))}</td></tr>`).join('')}</table></div>`;
-  if (d.kind === 'codecache' && d.heaps?.length) return `<div class="snap"><div class="snaph">Code cache ${when}</div>${codeCacheView(d.heaps)}<details onclick="event.stopPropagation()"><summary class="sub">jcmd output</summary><pre>${esc(d.text)}</pre></details></div>`;
-  return `<div class="snap"><div class="snaph">${esc(SNAPS.find(x => x[0] === d.kind)[1])} ${when}</div><pre>${esc(d.text)}</pre></div>`;
+  if (d.kind === 'codecache' && d.heaps?.length) return `<div class="snap"><div class="snaph">Code cache ${when}</div>${codeCacheView(d.heaps)}<details onclick="event.stopPropagation()"><summary class="sub">jcmd output</summary>${copyBtn(d.text, 'the jcmd output')}<pre>${esc(d.text)}</pre></details></div>`;
+  return `<div class="snap"><div class="snaph">${esc(SNAPS.find(x => x[0] === d.kind)[1])} ${when}${copyBtn(d.text, 'the jcmd output')}</div><pre>${esc(d.text)}</pre></div>`;
 }
 // One bar per code heap: used, with the high-water mark; the whole first when the JVM reports it
 function codeCacheView(heaps) {
@@ -304,7 +329,7 @@ function threadsView(id, d, when) {
     .sort((a, b) => b[1].some(t => t.deadlocked) - a[1].some(t => t.deadlocked) || cpuOf(b[1]) - cpuOf(a[1]) || b[1].length - a[1].length);
   if (!s.open) s.open = new Set(list.filter(([, g]) => g.some(t => t.deadlocked || stateOf(t) === 'BLOCKED') || cpuOf(g) >= 10).slice(0, 4).map(([k]) => k));
   const head = `<div class="snaph">${ts.length} threads · ${Object.entries(byState).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="tstate"><i style="background:${STATE_COLOR[k] || 'var(--s7)'}"></i>${n} ${k === 'VM' ? 'VM-internal' : k}</span>`).join(' ')}
-    · ${cores(busy / 10)} cores busy over the sampled second ${when}
+    · ${cores(busy / 10)} cores busy over the sampled second ${when} ${copyFnBtn(`dumpText(${id})`, 'every thread (idle ones too), as jstack prints them', 'all, as jstack')}
     <label class="chk" onclick="event.stopPropagation()"><input type="checkbox" ${s.showIdle ? 'checked' : ''} onchange="jvmSnaps[${id}].showIdle=this.checked;rerenderJvms()"> idle threads (${ts.filter(isIdle).length})</label></div>`;
   const dl = d.deadlocks.length ? `<div class="deadlock"><b>⚠ ${d.deadlocks.length === 1 ? 'Deadlock' : d.deadlocks.length + ' deadlocks'}</b><pre>${esc(d.deadlocks.join('\n\n'))}</pre></div>` : '';
   const body = list.map(([k, g]) => {
@@ -321,7 +346,7 @@ function threadView(t) {
   const frames = t.frames.map(f => `<div class="fr">${esc(shortFrame(f.text))}</div>${f.locks.map(l => `<div class="lk ${/^waiting to lock|^blocked/.test(l) ? 'bad' : ''}">- ${esc(l)}</div>`).join('')}`);
   const st = stateOf(t);
   return `<div class="th"><div class="thh"><b>${esc(t.name)}</b> <span class="tstate"><i style="background:${STATE_COLOR[st] || 'var(--s7)'}"></i>${esc(t.state || t.status || st)}</span>
-    ${t.deadlocked ? '<span class="jflag">⚠ deadlocked</span>' : ''}<span class="sub">${t.cpuDelta != null ? `${t.cpuDelta} ms in the last second · ` : ''}${t.cpuMs != null ? `${(t.cpuMs / 1000).toFixed(1)} s CPU total` : ''}${t.daemon ? ' · daemon' : ''}</span></div>
+    ${copyBtn(jstackText(t), 'this thread\'s stack, as jstack prints it')}${t.deadlocked ? '<span class="jflag">⚠ deadlocked</span>' : ''}<span class="sub">${t.cpuDelta != null ? `${t.cpuDelta} ms in the last second · ` : ''}${t.cpuMs != null ? `${(t.cpuMs / 1000).toFixed(1)} s CPU total` : ''}${t.daemon ? ' · daemon' : ''}</span></div>
     ${frames.length ? `<div class="stack">${frames.slice(0, 10).join('')}${frames.length > 10 ? `<details onclick="event.stopPropagation()"><summary class="sub">${frames.length - 10} more frames</summary>${frames.slice(10).join('')}</details>` : ''}</div>` : ''}
     ${t.synchronizers.length ? `<div class="lk">owns: ${t.synchronizers.map(esc).join(', ')}</div>` : ''}</div>`;
 }
