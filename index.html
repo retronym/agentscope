@@ -83,9 +83,25 @@ section.fold > h2::before, .fold > .profh > b:first-child::before { content: '�
 section.folded > h2 { margin-bottom: 0; }
 section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }  /* stretched: a row of cards ends level */
 .card { padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; position: relative; }
 .card:hover { border-color: var(--axis); }
+/* the quiet sessions: one line each, columns aligned across rows */
+.slist { margin-top: 10px; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto auto; column-gap: 12px; overflow: hidden; }
+.srow { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); cursor: pointer; min-height: 22px; }
+.srow:first-child { border-top: 0; }
+.srow:hover { background: var(--surface-2); }
+.srow .st { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.srow .st i { width: 7px; height: 7px; border-radius: 50%; }
+.srow .ln { display: inline-flex; gap: 4px; }
+.srow .x { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 12px; }
+.srow .x b { font-weight: 600; font-size: 13px; color: var(--ink); }
+.srow .x .d { margin-left: 10px; }
+.srow .x .d a { color: var(--s1); }
+.srow .prs { display: flex; gap: 4px; align-items: center; }
+.srow > .when { text-align: right; }
+.srow.kbd-sel { outline-offset: -2px; }
+@media (max-width: 800px) { .srow .x .d, .srow .prs { display: none; } }
 .card .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .meta { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .sum { color: var(--ink-2); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -290,7 +306,7 @@ dialog.keys-help::backdrop { background: rgba(0,0,0,.35); }
     <h2>Now <span class="sub">live sessions and anything active in the last 2h · CPU from cputime deltas, attributed by process ancestry (else by cwd)</span></h2>
     <div class="panel" id="machine"></div>
     <div style="height:10px"></div>
-    <div class="cards" id="cards"></div>
+    <div id="cards"></div>
     <div id="orphans"></div>
   </section>
   <section id="sec-jvms" class="fold">
@@ -436,6 +452,11 @@ function prState(p) {
   if (p.ci === 'SUCCESS') return { label: 'CI green', c: 'var(--good)', icon: '✓' };
   return { label: (p.state || 'open').toLowerCase(), c: 'var(--muted)', icon: '○' };
 }
+// a PR in a list row: state icon, repo#n; the rest on hover
+function prShort(key) {
+  const p = S.prMap[key], st = prState(p);
+  return `<a class="pr" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(p.repo)}#${p.number} ${esc(p.title)} — ${esc(st.label)}" onclick="event.stopPropagation()"><span style="color:${st.c}">${st.icon}</span>${esc(p.lane)}#${p.number}</a>`;
+}
 function prChip(key) {
   const p = S.prMap[key]; if (!p) return '';
   const st = prState(p);
@@ -580,14 +601,20 @@ function renderCards() {
   const key = new Map(list.map(s => [s.sid, [order[sessionState(s).k], -cpuTier(s), prevPos[s.sid] ?? 1e6, -(s.last || 0)]]));
   list.sort((a, b) => { const x = key.get(a.sid), y = key.get(b.sid); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; });
   list.forEach((s, i) => prevPos[s.sid] = i);
-  const html = list.map(s => {
+  // Sessions that want you or are doing something get a card; the rest are one line each in a list, GitHub's issue
+  // list: state, lane, title and where it stands, PRs, when. Columns line up across the rows (subgrid).
+  const loud = s => { const k = sessionState(s).k; return k === 'busy' || k === 'waiting' || !!s.summary?.needs_action || (s.load?.cpu || 0) >= 50; };
+  const row = s => {
+    const st = sessionState(s), detail = s.summary?.status_detail || s.report || '', prs = s.prs.filter(k => S.prMap[k]);
+    return `<div class="srow ${st.k}" data-sid="${s.sid}" onclick="openDrawer('${s.sid}')">
+      <span class="st"><i style="background:${st.c}"></i>${esc(st.label.replace(/^\W+\s*/, ''))}</span>
+      <span class="ln"><span class="lane-chip">${esc(s.lane)}</span>${accountChip(s)}</span>
+      <span class="x" title="${esc(s.title)}${detail ? '\n' + esc(detail) : ''}"><b>${esc(s.title)}</b>${detail ? `<span class="d">${lk(detail, s)}</span>` : ''}</span>
+      <span class="prs">${prs.slice(0, 3).map(prShort).join('')}${prs.length > 3 ? `<span class="when">+${prs.length - 3}</span>` : ''}</span>
+      <span class="when">${ago(s.last)}</span>${claudeLink(s) || '<span></span>'}</div>`;
+  };
+  const card = s => {
     const st = sessionState(s);
-    if (st.k !== 'busy' && st.k !== 'waiting' && !s.summary?.needs_action && (s.load?.cpu || 0) < 50)
-      return `<div class="panel card ${st.k}" data-sid="${s.sid}" style="padding:6px 10px;gap:2px" onclick="openDrawer('${s.sid}')">
-        <div class="row"><span class="badge"><i style="background:${st.c}"></i>${esc(st.label)}</span><span class="lane-chip">${esc(s.lane)}</span>${accountChip(s)}<span class="when" style="margin-left:auto">${ago(s.last)}</span>${claudeLink(s)}</div>
-        <div class="t" title="${esc(s.title)}">${esc(s.title)}</div>
-        ${s.summary?.status_detail ? `<div class="meta">${lk(s.summary.status_detail, s)}</div>` : ''}
-        ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}</div>`;
     const sum = s.summary?.status_detail || s.report || '';
     const need = s.summary?.needs_action;
     const procs = (s.load?.procs || []).filter(p => !p.self && (p.cpu > 1 || p.rss > 200e6)).slice(0, 3)
@@ -602,7 +629,10 @@ function renderCards() {
       ${jvmLine(s)}
       ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}
     </div>`;
-  }).join('') || '<div class="empty">nothing live</div>';
+  };
+  const cs = list.filter(loud), rs = list.filter(s => !loud(s));
+  const html = (cs.length ? `<div class="cards">${cs.map(card).join('')}</div>` : '') +
+    (rs.length ? `<div class="panel slist">${rs.map(row).join('')}</div>` : '') || '<div class="empty">nothing live</div>';
   const cards = $('#cards');
   if (cards.dataset.html !== html) { flip(cards, () => { cards.innerHTML = html; }); cards.dataset.html = html; }
   patch($('#orphans'), S.orphans.length ? `<div class="panel" style="padding:8px 12px;margin-top:10px"><b>Heavy processes not attributed to any session</b>` +

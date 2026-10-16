@@ -4,7 +4,7 @@
 const Keys = (() => {
   const SECTIONS = { n: 'sec-now', j: 'sec-jvms', t: 'sec-timeline', e: 'sec-ends' };
   const SECTION_NAMES = { n: 'Now', j: 'JVMs', t: 'Timeline', e: 'Loose ends' };
-  const ITEMS = '#cards .card[data-sid], #jvms tr.jr[data-jvm], #jvms tr[data-more], #ends .item';
+  const ITEMS = '#cards [data-sid], #jvms tr.jr[data-jvm], #jvms tr[data-more], #ends .item';
   const HELP = [
     ['Site-wide', [
       [['?'], 'show this help'],

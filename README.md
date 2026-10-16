@@ -24,9 +24,9 @@ agentscope reads what Claude Code already records on your machine, joins it with
 
 ### Now
 
-Live sessions first: waiting on you, then working, then recently active. Each card shows the agent's last status line, attributed CPU and memory with a sparkline, the heavy processes it is running, and its PRs with CI and review state. A machine strip splits total CPU into agents, the Claude app, system/security software and everything else; hover it to see which sessions were busiest at any moment.
+Sessions waiting on you, working, or with something for you to decide get a card; the rest of the last two hours are one line each, GitHub's issue list: state, lane, title and where it stands, PRs, when. Each card shows the agent's last status line, attributed CPU and memory with a sparkline, the heavy processes it is running, and its PRs with CI and review state. A machine strip splits total CPU into agents, the Claude app, system/security software and everything else; hover it to see which sessions were busiest at any moment.
 
-Cards stay put: they only reorder when a session's state or CPU tier changes materially, and moves are animated. Status chips (*waiting for you*, *active*, *working*, *GitHub*) filter every view.
+Cards and rows stay put: they only reorder when a session's state or CPU tier changes materially, and moves are animated. Status chips (*waiting for you*, *active*, *working*, *GitHub*) filter every view.
 
 ### JVMs: a profiler for every build your agents start
 
