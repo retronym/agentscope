@@ -3,7 +3,7 @@
 // flame graph has its own) are left alone.
 const Keys = (() => {
   const SECTIONS = { n: 'sec-now', j: 'sec-jvms', t: 'sec-timeline', e: 'sec-ends' };
-  const ITEMS = '#cards .card[data-sid], #jvms tr.jr[data-jvm], #ends .item';
+  const ITEMS = '#cards .card[data-sid], #jvms tr.jr[data-jvm], #jvms tr[data-more], #ends .item';
   const HELP = [
     ['Site-wide', [
       [['?'], 'show this help'],
@@ -19,7 +19,7 @@ const Keys = (() => {
     ['Lists', [
       [['j'], 'next session, JVM or loose end'],
       [['k'], 'previous'],
-      [['o'], [], ['Enter'], 'open the selection'],
+      [['o'], [], ['Enter'], 'open the selection, or show the rest of a list'],
       [['c'], 'continue the session in the Claude app'],
       [['z'], 'fold / unfold the section'],
     ]],
@@ -40,7 +40,7 @@ const Keys = (() => {
 
   let sel = null, chord = null, chordTimer = null, dlg = null;
 
-  const keyOf = el => el.dataset.sid ? 's:' + el.dataset.sid : el.dataset.jvm ? 'j:' + el.dataset.jvm
+  const keyOf = el => el.dataset.sid ? 's:' + el.dataset.sid : el.dataset.jvm ? 'j:' + el.dataset.jvm : el.dataset.more ? 'm:' + el.dataset.more
     : 'e:' + [...$('#ends').querySelectorAll('.panel')].indexOf(el.closest('.panel')) + ':' + (el.getAttribute('onclick') || el.textContent.slice(0, 60));
   const items = () => [...document.querySelectorAll(ITEMS)].filter(el => el.getClientRects().length);
   // after a re-render: the selected element is a new node, so mark it again

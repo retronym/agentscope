@@ -151,11 +151,17 @@ function jvmChart(rows, wide) {
 }
 
 // ---------------------------------------------------------------- the section, cards, drawer, loose ends
+// Quiet JVMs fold into one row at the end of the table: nothing to see, and no live session to tie them to.
+// Unfolding is remembered (moreRow); with a filter on, every match shows.
+const jvmQuiet = j => !j.flags.length && jvmTier(j) === 0 && !recState().jvms[j.id]?.live && !openJvms.has(j.id) && boxId !== j.id && !S.sMap[j.sid]?.live;
 function renderJvms() {
   const all = S.jvms || [], list = jvmSorted(all.filter(jvmVisible));
+  const quiet = query || chips.size ? [] : list.filter(jvmQuiet), shown = list.filter(j => !quiet.includes(j)), open = moreOpen('jvms');
   const sub = $('#jvm-sub');
   if (sub) sub.textContent = `${all.length} JVMs · ${cores(all.reduce((a, j) => a + j.cpu, 0))} cores · ${mb(all.reduce((a, j) => a + j.heap_used, 0))} heap in use · read from hsperfdata, nothing attached`;
-  patch($('#jvms'), list.length ? jvmTable(list, true) : `<div class="empty" style="padding:10px 12px">${all.length ? 'no JVMs match the filter' : 'no JVMs running (or none publishing perf data)'}</div>`);
+  const names = Object.entries(quiet.reduce((a, j) => (a[j.label] = (a[j.label] || 0) + 1, a), {})).map(([l, n]) => n > 1 ? `${l} ×${n}` : l).join(', ');
+  const more = quiet.length ? `<tr class="jmore" data-more="jvms" onclick="toggleMore('jvms')"><td colspan="12">${moreRow('jvms', quiet.length, 'quiet JVM', names)}</td></tr>` : '';
+  patch($('#jvms'), list.length ? jvmTable(open ? shown.concat(quiet) : shown, true).replace(/<\/table>$/, more + '</table>') : `<div class="empty" style="padding:10px 12px">${all.length ? 'no JVMs match the filter' : 'no JVMs running (or none publishing perf data)'}</div>`);
   for (const id of openJvms) if (!jvmHistCache[id]) loadJvmHist(id);
   renderJvmBox();
   renderCapsPanel();

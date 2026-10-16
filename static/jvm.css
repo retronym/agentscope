@@ -8,6 +8,9 @@ table.jt tr.jr:hover td { background: var(--surface-2); }
 table.jt tr.jr.open td { background: var(--surface-2); border-bottom-color: transparent; }
 table.jt tr.jd td { background: var(--surface-2); padding: 4px 12px 12px; white-space: normal; }
 table.jt .num { text-align: right; }
+table.jt tr.jmore { cursor: pointer; }
+table.jt tr.jmore td { color: var(--muted); padding: 7px 8px; }
+table.jt tr.jmore:hover td { background: var(--surface-2); color: var(--ink-2); }
 table.jt .who { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 table.jt .sub { color: var(--muted); font-size: 11px; }
 table.jt .dim { color: var(--muted); }

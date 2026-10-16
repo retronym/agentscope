@@ -106,6 +106,8 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .ends h3 .n { color: var(--muted); font-weight: 400; }
 .item { padding: 6px 0; border-top: 1px solid var(--border); cursor: pointer; }
 .item:first-of-type { border-top: 0; }
+.item.more { color: var(--muted); font-size: 12px; }
+.item.more:hover { color: var(--ink-2); }
 .item .a { display: flex; gap: 6px; align-items: center; }
 .item .a .x { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .b { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -367,6 +369,10 @@ document.addEventListener('click', e => {
   localStore('fold.' + el.id, on ? '1' : '');
   if (!on) { if (S) render(); renderJvmBox(); dispatchEvent(new Event('resize')); }
 });
+// Long lists show their head and a row that unfolds the rest, remembered per list; the 5-second refresh keeps it so.
+const moreOpen = k => localStore('more.' + k) === '1';
+function toggleMore(k) { localStore('more.' + k, moreOpen(k) ? '' : '1'); if (S) render(); }
+const moreRow = (k, n, what, detail) => moreOpen(k) ? `▾ show fewer` : `▸ ${n} ${what === 'more' ? 'more' : what + (n > 1 ? 's' : '')}${detail ? ` <span class="when">· ${esc(detail)}</span>` : ''}`;
 function localStore(k, v) { try { if (v === undefined) return localStorage.getItem('as.' + k); localStorage.setItem('as.' + k, v); } catch (e) { return null; } }
 function ago(t) {
   if (!t) return '';
@@ -819,7 +825,11 @@ function renderEnds() {
   // 7. unarchived but dead sessions, oldest first: archive or revive
   const stale = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 5 * 86400).sort((a, b) => a.last - b.last);
   groups.push(['🗄 Unarchived, idle > 5 days', stale.map(s => sessItem(s, lk(s.summary?.status_detail || '', s)))]);
-  patch($('#ends'), groups.map(([h, its]) => `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${its.slice(0, 12).join('') || '<div class="empty">none</div>'}${its.length > 12 ? `<div class="empty">+${its.length - 12} more</div>` : ''}</div>`).join(''));
+  patch($('#ends'), groups.map(([h, its], i) => {
+    const k = 'ends.' + i, all = moreOpen(k);
+    return `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${(all ? its : its.slice(0, 12)).join('') || '<div class="empty">none</div>'}` +
+      (its.length > 12 ? `<div class="item more" data-more="${k}" onclick="toggleMore('${k}')">${moreRow(k, its.length - 12, 'more')}</div>` : '') + '</div>';
+  }).join(''));
 }
 
 // ---------------------------------------------------------------- drawer
