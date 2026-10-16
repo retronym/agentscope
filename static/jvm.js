@@ -56,15 +56,15 @@ function jvmRows(list, withSession, inline) {
       <td>${heapBar(j)} <span class="sub">${mb(j.heap_used)} / ${mb(j.heap_max)}</span></td>
       <td class="num">${pct(j.gc_pct)}</td>
       <td class="num">${rate(j.alloc)}</td>
-      <td class="num">${j.threads}</td>
-      <td class="num">${(j.classes / 1000).toFixed(0)}k</td>
+      <td class="num opt">${j.threads}</td>
+      <td class="num opt">${(j.classes / 1000).toFixed(0)}k</td>
       <td>${jvmFlags(j)}</td>
       <td class="exp"><button class="ibtn" title="open full size" onclick="event.stopPropagation();openJvmBox(${j.id})">⤢</button></td></tr>` +
       (open ? `<tr class="jd"><td colspan="${withSession ? 12 : 11}">${jvmDetail(j)}</td></tr>` : '');
   }).join('');
 }
 function jvmTable(list, withSession, inline = true) {
-  return `<table class="jt"><tr><th class="rec">${recAllToggle()}</th><th>JVM</th>${withSession ? '<th>session</th>' : ''}<th class="num">up</th><th class="num">CPU (cores)</th><th>heap used / max</th><th class="num" title="share of wall time in GC pauses">GC</th><th class="num" title="estimated from eden turnover">alloc ≈</th><th class="num">threads</th><th class="num">classes</th><th></th><th></th></tr>${jvmRows(list, withSession, inline)}</table>`;
+  return `<table class="jt"><tr><th class="rec">${recAllToggle()}</th><th>JVM</th>${withSession ? '<th>session</th>' : ''}<th class="num">up</th><th class="num">CPU (cores)</th><th>heap used / max</th><th class="num" title="share of wall time in GC pauses">GC</th><th class="num" title="estimated from eden turnover">alloc ≈</th><th class="num opt">threads</th><th class="num opt">classes</th><th></th><th></th></tr>${jvmRows(list, withSession, inline)}</table>`;
 }
 
 // Copy buttons: a small ⧉ that copies its data-copy text (or, for big text, what copyOf builds on click), ✓ when done

@@ -92,13 +92,15 @@ const Keys = (() => {
     if (!dlg) {
       dlg = document.createElement('dialog');
       dlg.className = 'keys-help';
+      dlg.tabIndex = -1;  // focusable itself, so opening doesn't land on (and ring) its close button
       dlg.innerHTML = `<div class="kh-top"><b>Keyboard shortcuts</b><button class="close" title="close (Esc)">✕</button></div><div class="kh-cols">` +
         HELP.map(([h, rows]) => `<div><h3>${esc(h)}</h3><dl>${rows.map(row).join('')}</dl></div>`).join('') + `</div>`;
       dlg.querySelector('.close').onclick = () => dlg.close();
       dlg.onclick = e => { if (e.target === dlg) dlg.close(); };  // the backdrop
       document.body.appendChild(dlg);
     }
-    dlg.open ? dlg.close() : dlg.showModal();
+    if (dlg.open) return dlg.close();
+    dlg.showModal(); dlg.focus();
   }
   // ---------------------------------------------------------------- ⌘K: jump to anything by name, after GitHub's command palette
   // Every term must appear somewhere in an entry; matches in its name rank first, then live sessions, then recent ones.
@@ -107,7 +109,7 @@ const Keys = (() => {
     const out = [];
     for (const s of S?.sessions || []) {
       const st = sessionState(s);
-      out.push({ name: s.title, hint: `${s.lane} · ${st.label} · ${ago(s.last)}`, kind: 'session', c: st.c,
+      out.push({ name: s.title, hint: `${s.lane} · ${st.label.replace(/^· /, '')} · ${ago(s.last)}`, kind: 'session', c: st.c,
         hay: [s.lane, s.branch, s.cwd, ...(s.prs || [])].join(' '), rank: s.live ? 2 : s.archived ? 0 : 1, t: s.last || 0, sid: s.sid, run: () => openDrawer(s.sid) });
     }
     for (const j of S?.jvms || []) {
@@ -125,8 +127,8 @@ const Keys = (() => {
   function palSearch(q) {
     const all = palEntries(), terms = q.toLowerCase().split(/\s+/).filter(Boolean);
     if (!terms.length) {  // nothing typed: recently opened sessions, then where you can go
-      const recent = crumbs.map(sid => all.find(e => e.sid === sid)).filter(Boolean);
-      return recent.concat(all.filter(e => e.kind === 'go'));
+      const recent = crumbs.map(sid => all.find(e => e.sid === sid)).filter(Boolean).map(e => ({ ...e, group: 'Recent sessions' }));
+      return recent.concat(all.filter(e => e.kind === 'go').map(e => ({ ...e, group: 'Go to' })));
     }
     const scored = [];
     for (const e of all) {
@@ -137,9 +139,17 @@ const Keys = (() => {
     }
     return scored.sort((a, b) => b[0] - a[0] || b[1].rank - a[1].rank || b[1].t - a[1].t).slice(0, 50).map(x => x[1]);
   }
+  // the typed terms, underlined where they occur in a name
+  function marked(text, q) {
+    const terms = q.split(/\s+/).filter(Boolean).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (!terms.length) return esc(text);
+    return text.split(new RegExp(`(${terms.join('|')})`, 'gi')).map((p, i) => i % 2 ? `<mark>${esc(p)}</mark>` : esc(p)).join('');
+  }
   function palRender() {
-    const box = pal.querySelector('.pl-list');
-    box.innerHTML = palItems.length ? palItems.map((e, i) => `<div class="pl-i ${i === palIdx ? 'on' : ''}" data-i="${i}"><i style="background:${e.c || 'transparent'}"></i><span class="pl-k">${{ session: 'session', jvm: '☕', go: '→' }[e.kind]}</span><span class="pl-n">${esc(e.name)}</span><span class="when">${esc(e.hint)}</span></div>`).join('')
+    const box = pal.querySelector('.pl-list'), q = pal.querySelector('input').value;
+    const icon = e => e.kind === 'session' ? `<i style="background:${e.c}"></i>` : e.kind === 'jvm' ? '☕' : '→';
+    box.innerHTML = palItems.length ? palItems.map((e, i) => (e.group && e.group !== palItems[i - 1]?.group ? `<div class="pl-g">${esc(e.group)}</div>` : '') +
+      `<div class="pl-i ${i === palIdx ? 'on' : ''}" data-i="${i}"><span class="pl-k">${icon(e)}</span><span class="pl-n">${marked(e.name, q)}</span><span class="when">${e.kind === 'go' ? e.hint.split(' ').map(kbd).join(' ') : esc(e.hint)}</span></div>`).join('')
       : '<div class="empty" style="padding:8px 12px">nothing matches</div>';
     box.querySelector('.pl-i.on')?.scrollIntoView({ block: 'nearest' });
   }
@@ -149,7 +159,9 @@ const Keys = (() => {
     if (!pal) {
       pal = document.createElement('dialog');
       pal.className = 'palette';
-      pal.innerHTML = `<input type="search" placeholder="Jump to a session, JVM or section…" autocomplete="off" spellcheck="false"><div class="pl-list"></div>`;
+      pal.innerHTML = `<div class="pl-top"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5" stroke-linecap="round"/></svg>` +
+        `<input type="text" placeholder="Jump to a session, JVM or section…" autocomplete="off" spellcheck="false" aria-label="Jump to"></div><div class="pl-list" role="listbox"></div>` +
+        `<div class="pl-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to move</span><span><kbd>↵</kbd> to open</span><span><kbd>esc</kbd> to close</span></div>`;
       const inp = pal.querySelector('input');
       inp.oninput = () => { palItems = palSearch(inp.value); palIdx = 0; palRender(); };
       inp.onkeydown = e => {

@@ -50,12 +50,20 @@ header h1 img { width: 22px; height: 22px; border-radius: 5px; }
 /* scrolled: one line of controls, no stat tiles (compactHeader) */
 header.compact { padding-top: 6px; padding-bottom: 6px; row-gap: 6px; }
 header.compact .tile, header.compact #updated { display: none; }
-header.compact h1 { font-size: 0; gap: 0; }
+header.compact h1, header.compact .spacer { display: none; }
 .tile { display: flex; flex-direction: column; min-width: 90px; }
 .tile .v { font-size: 18px; font-weight: 600; }
 .tile .l { color: var(--muted); font-size: 11px; }
 .spacer { flex: 1; }
-.ctl { display: flex; gap: 6px; align-items: center; }
+.ctl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* a field's shortcut, shown inside it until you're in it or it holds something (GitHub's) */
+.kfield { position: relative; display: inline-flex; }
+.kfield input { padding-right: 28px; }
+.kfield > kbd { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.kfield input:focus + kbd, .kfield input:not(:placeholder-shown) + kbd { display: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus-visible { outline: none; }
+dialog:focus-visible { outline: none; }
 button, input[type=search] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
 input[type=search]:focus { outline: none; border-color: var(--accent); }
 button { cursor: pointer; }
@@ -217,13 +225,19 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 5px; font: 11px/1.4 
 tr.kbd-sel { outline-offset: -2px; }
 dialog.palette { width: min(640px, calc(100vw - 32px)); margin-top: 12vh; padding: 0; border: 1px solid var(--axis); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.3); }
 dialog.palette::backdrop { background: rgba(0,0,0,.35); }
-.palette input { width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 12px 14px; font-size: 15px; background: transparent; }
+.palette .pl-top { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.palette input { flex: 1; min-width: 0; border: 0; padding: 13px 0; font: 15px var(--font-ui); color: var(--ink); background: transparent; }
 .palette input:focus { outline: none; }
+.palette .pl-g { padding: 8px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.palette .pl-g:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--border); padding-top: 10px; }
+.palette .pl-foot { display: flex; gap: 16px; padding: 8px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11.5px; }
+.palette .pl-foot kbd { margin-right: 3px; }
+.palette mark { background: none; color: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; padding: 0; }
 .palette .pl-list { max-height: 55vh; overflow-y: auto; padding: 6px; overscroll-behavior: contain; }
 .palette .pl-i { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
 .palette .pl-i.on { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
-.palette .pl-i i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.palette .pl-k { color: var(--muted); font-size: 11px; width: 44px; flex-shrink: 0; }
+.palette .pl-k i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.palette .pl-k { color: var(--muted); font-size: 12px; width: 14px; text-align: center; flex-shrink: 0; }
 .palette .pl-n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 dialog.keys-help { width: min(760px, calc(100vw - 32px)); max-height: 80vh; padding: 0; border: 1px solid var(--axis); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.3); }
 dialog.keys-help::backdrop { background: rgba(0,0,0,.35); }
@@ -261,8 +275,8 @@ dialog.keys-help::backdrop { background: rgba(0,0,0,.35); }
   <div class="tile"><span class="v" id="t-prs">–</span><span class="l">open PRs (30d) · CI failing</span></div>
   <div class="spacer"></div>
   <div class="ctl">
-    <input type="search" id="q" placeholder="filter (title, lane, branch, PR)…" size="26">
-    <span style="position:relative"><input type="search" id="tq" placeholder="search thread contents…  ( / )" size="26" autocomplete="off"><div id="sres" class="sres"></div></span>
+    <span class="kfield"><input type="search" id="q" placeholder="Filter sessions…" title="matches title, lane, branch, directory and PR" size="24"><kbd>f</kbd></span>
+    <span class="kfield"><input type="search" id="tq" placeholder="Search threads…" title="full-text search of every prompt and reply" size="24" autocomplete="off"><kbd>/</kbd><div id="sres" class="sres"></div></span>
     <span id="rec" class="ctl"></span>
     <span id="chips" class="ctl"></span>
     <label class="chk"><input type="checkbox" id="show-archived"> archived</label>
