@@ -205,6 +205,20 @@ mark { background: color-mix(in srgb, var(--accent) 32%, transparent); color: in
 .err { color: var(--critical); }
 @media (max-width: 700px) { #machine { grid-template-columns: 1fr; } .ends { grid-template-columns: 1fr; } header, main { padding-left: 16px; padding-right: 16px; } }
 section.only-part > :not(h2):not(.only-this) { display: none !important; }
+/* keyboard shortcuts (static/keys.js) */
+kbd { display: inline-block; min-width: 1.6em; padding: 1px 5px; font: 11px/1.4 var(--font-mono); text-align: center; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; }
+.kbd-sel { outline: 2px solid var(--accent); outline-offset: 1px; scroll-margin: calc(var(--header-h, 150px) + 8px) 0 24px; }
+tr.kbd-sel { outline-offset: -2px; }
+dialog.keys-help { width: min(760px, calc(100vw - 32px)); max-height: 80vh; padding: 0; border: 1px solid var(--axis); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+dialog.keys-help::backdrop { background: rgba(0,0,0,.35); }
+.keys-help .kh-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.keys-help .close { width: 28px; height: 28px; padding: 0; border-radius: 50%; color: var(--muted); }
+.keys-help .kh-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 4px 28px; padding: 6px 16px 16px; }
+.keys-help h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); margin: 12px 0 6px; }
+.keys-help dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; align-items: baseline; }
+.keys-help dt { white-space: nowrap; }
+.keys-help dd { margin: 0; color: var(--ink-2); }
+.keys-help .or { color: var(--muted); font-size: 11px; margin: 0 2px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -215,6 +229,7 @@ section.only-part > :not(h2):not(.only-this) { display: none !important; }
 <script src="static/captures.js"></script>
 <script src="static/activity.js"></script>
 <script src="static/demo.js"></script>
+<script src="static/keys.js"></script>
 </head>
 <body>
 <div id="demo-banner" class="demo-banner" hidden>
@@ -264,7 +279,7 @@ section.only-part > :not(h2):not(.only-this) { display: none !important; }
     <div class="ends" id="ends"></div>
   </section>
 </main>
-<footer class="foot"><a href="https://github.com/retronym/agentscope" target="_blank" rel="noopener">agentscope</a> · a local dashboard for Claude Code agent sessions · Apache 2.0</footer>
+<footer class="foot"><a href="https://github.com/retronym/agentscope" target="_blank" rel="noopener">agentscope</a> · a local dashboard for Claude Code agent sessions · Apache 2.0 · <a href="#" onclick="Keys.help();return false">keyboard shortcuts</a> <kbd>?</kbd></footer>
 <div id="drawer"></div>
 <div class="tip" id="tip"></div>
 <script>
@@ -1076,7 +1091,6 @@ $('#tq').onclick = () => { if ($('#tq').value.trim().length >= 2) runSearch(); }
 try { $('#tq').value = sessionStorage.getItem('as.tq') || ''; } catch (e) {}  // survives the page's self-reload
 $('#tq').onkeydown = e => { if (e.key === 'Escape') { $('#sres').classList.remove('open'); e.target.blur(); } };
 document.addEventListener('click', e => { if (!e.target.closest('#sres, #tq')) $('#sres').classList.remove('open'); });
-document.addEventListener('keydown', e => { if (e.key === '/' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); $('#tq').focus(); } });
 $('#q').oninput = e => { query = e.target.value.toLowerCase().trim(); render(); };
 $('#chips').onclick = e => {
   const b = e.target.closest('.chip'); if (!b) return;

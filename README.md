@@ -68,6 +68,10 @@ Click any session for its status, PRs, related sessions, process history, and th
 
 Press `/` to search every prompt and agent message across all sessions (SQLite FTS5: stemmed, all terms required, `"quoted phrases"`). Hits are grouped by session with highlighted snippets; clicking one opens the thread scrolled to that message.
 
+### Keyboard
+
+The keys follow GitHub's; press `?` for the list. `g n` / `g j` / `g t` / `g e` jump to Now, JVMs, Timeline and Loose ends; `j` / `k` walk the session cards, JVMs and loose ends, `o` or Enter opens one, and with a session open `j` / `k` step the panel through the list. `c` continues the session in the Claude app, `z` folds the section, `f` filters, `1`–`4` pick the time range.
+
 ### Loose ends
 
 <img src="docs/screenshots/loose-ends.webp" alt="Loose ends: needs you, landable PRs, PRs in trouble">
