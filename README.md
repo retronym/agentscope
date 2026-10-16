@@ -70,7 +70,7 @@ Press `/` to search every prompt and agent message across all sessions (SQLite F
 
 ### Keyboard
 
-The keys follow GitHub's; press `?` for the list. `g n` / `g j` / `g t` / `g e` jump to Now, JVMs, Timeline and Loose ends; `j` / `k` walk the session cards, JVMs and loose ends, `o` or Enter opens one, and with a session open `j` / `k` step the panel through the list. `c` continues the session in the Claude app, `z` folds the section, `f` filters, `1`–`4` pick the time range.
+The keys follow GitHub's; press `?` for the list. ⌘K jumps to any session, JVM or section by name. `g n` / `g j` / `g t` / `g e` jump to Now, JVMs, Timeline and Loose ends; `j` / `k` walk the session cards, JVMs and loose ends, `o` or Enter opens one, and with a session open `j` / `k` step the panel through the list. On a JVM, `o` opens the full view, `x` expands the row in place and `r` starts or stops recording. `c` continues the session in the Claude app, `z` folds the section, `f` filters, `1`–`4` pick the time range.
 
 ### Loose ends
 
