@@ -1172,9 +1172,12 @@ def serve(port):
 
         def do_POST(self):
             # Anything that touches another process is a POST with a JSON body, and only from this page: a cross-site
-            # page can't send application/json without a preflight we never answer, and its Origin wouldn't match.
+            # page can't send application/json without a preflight we never answer, and its Origin wouldn't match. Any
+            # loopback name is accepted so a local proxy (portless: https://agentscope.localhost) can front us; browsers
+            # pin *.localhost to loopback, so a DNS-rebound page can't claim one.
             origin = self.headers.get("Origin")
-            if origin and origin not in (f"http://localhost:{port}", f"http://127.0.0.1:{port}"):
+            host = re.sub(r"^https?://|:\d+$", "", origin or "")
+            if origin and not (host in ("localhost", "127.0.0.1", "[::1]") or host.endswith(".localhost")):
                 return self._send(403, "cross-origin request refused", "text/plain")
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                 return self._send(415, "expected application/json", "text/plain")
