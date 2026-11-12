@@ -282,6 +282,7 @@ dialog.keys-help::backdrop { background: rgba(0,0,0,.35); }
 <script src="static/activity.js"></script>
 <script src="static/demo.js"></script>
 <script src="static/keys.js"></script>
+<script src="static/disk.js"></script>
 </head>
 <body>
 <div id="demo-banner" class="demo-banner" hidden>
@@ -566,7 +567,7 @@ function renderMachine() {
     svg += `<text x="0" y="${H + 12}" class="tick" style="fill:var(--muted);font-size:10.5px">${ago(t0)}</text><text x="${W}" y="${H + 12}" text-anchor="end" style="fill:var(--muted);font-size:10.5px">now</text>`;
     svg += `<rect id="mh" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>`;
   } else svg = `<text x="0" y="30" style="fill:var(--muted)">collecting samples…</text>`;
-  $('#machine').innerHTML = `<div class="legend"><div style="color:var(--ink);font-weight:600">Machine CPU<b>${cores(tot)} / ${S.ncpu} cores</b></div>${leg}</div><svg width="${W}" height="${H + 16}">${svg}</svg>`;
+  $('#machine').innerHTML = `<div class="legend"><div style="color:var(--ink);font-weight:600">Machine CPU<b>${cores(tot)} / ${S.ncpu} cores</b></div>${leg}${diskLegend()}</div><svg width="${W}" height="${H + 16}">${svg}</svg>`;
   const mh = $('#mh');
   if (mh) {
     const t0 = h[0][0], t1 = h[h.length - 1][0];
@@ -902,8 +903,10 @@ function renderEnds() {
   // 7. unarchived but dead sessions, oldest first: archive or revive
   const stale = S2.filter(s => !s.live && !s.archived && S.now - (s.last || 0) > 5 * 86400).sort((a, b) => a.last - b.last);
   groups.push(['🗄 Unarchived, idle > 5 days', stale.map(s => sessItem(s, lk(s.summary?.status_detail || '', s)))]);
-  patch($('#ends'), groups.map(([h, its], i) => {
-    const k = 'ends.' + i, all = moreOpen(k);
+  // the disk group is there only while the disk is low: first, and keyed by name so the others keep their numbers
+  const disk = diskEndsGroup();
+  patch($('#ends'), (disk ? [[...disk, 'disk']] : []).concat(groups.map((g, i) => [...g, i])).map(([h, its, key]) => {
+    const k = 'ends.' + key, all = moreOpen(k);
     return `<div class="panel"><h3>${h} <span class="n">${its.length}</span></h3>${(all ? its : its.slice(0, 12)).join('') || '<div class="empty">none</div>'}` +
       (its.length > 12 ? `<div class="item more" data-more="${k}" onclick="toggleMore('${k}')">${moreRow(k, its.length - 12, 'more')}</div>` : '') + '</div>';
   }).join(''));
