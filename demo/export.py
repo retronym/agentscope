@@ -353,6 +353,7 @@ def anonymize(state, load, threads, procs):
         jvms=[dict(j, sid=sid(j["sid"]) if j.get("sid") else None, label=map_jvm_label(j["label"]), main=map_jvm_label(j["label"]), args="", vendor="")
               for j in state["jvms"] if j["label"] != "agentscope helper"],  # our own helper: its name is a real repo
         jvm_hist=None,
+        disk=None,  # free space and the directories that grew are this machine's; the page draws nothing without it
         machine_hist=[[t, b, [[sid(x), c] for x, c in top]] for t, b, top in state["machine_hist"]],
     )
     out_load = [dict(t=r["t"], s={(k if k.startswith("@") else sid(k)): v for k, v in r["s"].items()}) for r in load]

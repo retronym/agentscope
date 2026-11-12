@@ -28,3 +28,34 @@ The aim: what's left to trade off is only what async-profiler itself costs, a na
 
 - `--jfrsync` as an option, for one file holding both for JMC (and once it streams).
 - Capture samples in Across JVMs.
+
+# PLAN: a disk that doesn't fill unnoticed
+
+## Why
+
+Agents fill the disk: worktrees, build and benchmark output, profiler traces, dependency caches, scratchpads. At ENOSPC no session on the machine can run a shell command, and by then finding what to delete is manual. Nothing watched free space or said what grew.
+
+## Key decisions
+
+- **Free space is cheap, so sample it like everything else:** one `statvfs` a minute into `disk_minute`. The page shows it in the machine strip with a week's trend and the day's change, amber then red as it gets low.
+- **What grew is a difference of two `du` samples of a fixed set of directories**, not a walk of the disk: worktrees, perflab output directories, dependency caches, session scratchpads. Those are where an agent's bytes go, and each has an owner to name.
+- **`du` never runs for a request.** One pass every 45 minutes in its own thread, a directory at a time, under `nice` and macOS's background band (`taskpolicy -b`), so it doesn't show up in a benchmark. A pass is stored in one transaction; the page reads the last complete one.
+- **A row per change, not per pass.** Most worktrees don't change between passes, so `disk_du` only gets a row when a size differs. A directory created inside the window counts in full.
+- **Growers appear only when it matters:** below the threshold (40 GB) Loose ends gets a group, each directory with the session that last touched it (its cwd, its worktree, or the last to name the path; a scratchpad's is in its path).
+- **In its own module** (`disk.py`, `static/disk.js`), like the JVM table.
+
+## Steps
+
+- [x] 1. Free space per minute, kept 30 days.
+- [x] 2. Machine strip: free space, trend, colour.
+- [x] 3. Background `du` passes, growth over 24 h, sessions attributed.
+- [x] 4. Loose ends group below the threshold; `/api/state`; the demo export carries no disk data and the page draws nothing without it.
+- [x] 5. README.
+
+## Future work
+
+- An archive tier: move a finished session's worktree or a campaign's output off the disk and restore it on demand.
+- Deleting from the page: remove a worktree whose session is archived and whose branch is merged or pushed.
+- Sizes that know about APFS clones: `du` counts a `cp -c` copy in full, so a cloned workspace looks bigger than what deleting it frees.
+- Other growers seen here but not measured: xctrace/ktrace traces and collapsed-stack files written outside a worktree or scratchpad.
+- A notification before the page is open: a desktop alert when free space crosses the threshold.

@@ -28,7 +28,7 @@ agentscope reads what Claude Code already records on your machine, joins it with
 
 ### Now
 
-Sessions waiting on you, working, or with something for you to decide get a card; the rest of the last two hours are one line each, GitHub's issue list: state, lane, title and where it stands, PRs, when. Each card shows the agent's last status line, attributed CPU and memory with a sparkline, the heavy processes it is running, and its PRs with CI and review state. A machine strip splits total CPU into agents, the Claude app, system/security software and everything else; hover it to see which sessions were busiest at any moment.
+Sessions waiting on you, working, or with something for you to decide get a card; the rest of the last two hours are one line each, GitHub's issue list: state, lane, title and where it stands, PRs, when. Each card shows the agent's last status line, attributed CPU and memory with a sparkline, the heavy processes it is running, and its PRs with CI and review state. A machine strip splits total CPU into agents, the Claude app, system/security software and everything else; hover it to see which sessions were busiest at any moment. Below it, free disk space: a week's trend, the change over the last day and, when it is falling, how long that rate leaves. It turns amber below 40 GB and red below 15 GB.
 
 Cards and rows stay put: they only reorder when a session's state or CPU tier changes materially, and moves are animated. Status chips (*waiting for you*, *active*, *working*, *GitHub*) filter every view.
 
@@ -94,6 +94,7 @@ The keys follow GitHub's; press `?` for the list. ⌘K jumps to any session, JVM
 
 <img src="docs/screenshots/loose-ends.webp" alt="Loose ends: needs you, landable PRs, PRs in trouble">
 
+- **Disk low** (only below 40 GB free): the directories that grew most in the last day, each with the session that last touched it. Measured are every worktree under `~/code/**/.worktrees`, the output directories of any `perflab.toml`, the Coursier, Ivy and Maven caches, and each session's scratchpad under `/private/tmp/claude-*`.
 - **Needs you:** sessions blocked on a prompt, or whose last turn ended with a question to you.
 - **PRs that look landable** and **PRs in trouble** (failing CI, changes requested, conflicts).
 - **Gone quiet with open PRs:** the session stopped, the PR didn't.
@@ -126,6 +127,7 @@ Everything is local and read-only except the GitHub query:
 | `~/.claude/projects/**/*.jsonl` (likewise) | transcripts: activity, prompts, messages, proposals, token counts |
 | `ps`, `lsof` | the process tree, cputime, memory, working directories |
 | `hsperfdata_<user>/<pid>` in the temp dir | every JVM's GC, heap, safepoint, thread, class and JIT counters, without attaching |
+| `statvfs` on `/`, `du -sk` | free space every minute; the size of each worktree, benchmark output directory, dependency cache and scratchpad every 45 minutes, at background priority |
 | `gh api graphql` | your open PRs and those closed in the last 45 days: CI, reviews, mergeability |
 
 agentscope is a plain script. It makes no model calls, and nothing leaves your machine except the GitHub query and the two pinned markdown libraries the page loads from cdnjs.
@@ -137,6 +139,7 @@ History lives in SQLite at `~/.cache/agentscope/agentscope.db`, one row per minu
 - `session_minute`, `bucket_minute`: CPU and memory per session and per machine group. Kept a year.
 - `proc`, `proc_minute`: every process that used ≥ 0.5% CPU or ≥ 50 MB in a minute, with its command line, working directory, owning session and how it was attributed. Kept 30 days.
 - `jvm`, `jvm_minute`: every JVM seen, with its session, version, collector and options, and its counters per minute. Kept 30 days.
+- `disk_minute`: free space on `/`. Kept 30 days. `disk_dir`, `disk_du`: the measured directories and a row each time one's size changed. Kept 14 days.
 - `capture`: async-profiler captures; the `.jfr` files (async-profiler's, and JFR's recording of the same window beside each) sit in `~/.cache/agentscope/captures`. Kept 30 days.
 - `frame`, `node`, `tgroup`, `sample_blob`: recorded profiles, as constant pools (frames, stacks as a prefix tree, thread groups) and a compressed blob per JVM, minute and kind. Kept 7 days.
 - `msg_fts`: the full-text index over prompts and agent messages.
@@ -159,6 +162,8 @@ python3 agentscope.py        # or: mise run serve
 Then open http://localhost:8377. To try changes without touching your history, run a second copy on a scratch database: `python3 agentscope.py --port 8378 --db dist/dev.db`. Load history accumulates while the server runs, so leave it running: `mise run install-agent` makes it a launchd agent that starts at login and restarts if it dies, logging to `~/Library/Logs/agentscope.log` (`mise run uninstall-agent` removes it). It captures the installing shell's `PATH` and `JAVA_HOME`, so rerun it if `gh` or the JDK move.
 
 **Several Claude accounts?** If you run `claude` with different `CLAUDE_CONFIG_DIR`s (e.g. `alias claude-work='env CLAUDE_CONFIG_DIR=$HOME/.claude-work claude'`), agentscope reads `~/.claude`, `$CLAUDE_CONFIG_DIR` and every `~/.claude-*` directory that holds sessions, and tags each session with the one it came from. To choose explicitly, pass `--claude-dir` once per directory, or set `AGENTSCOPE_CLAUDE_DIRS` (colon-separated). The startup line lists the directories in use.
+
+The disk thresholds are `AGENTSCOPE_DISK_LOW_GB` (40) and `AGENTSCOPE_DISK_CRITICAL_GB` (15); `AGENTSCOPE_DISK_DIRS` (colon-separated) adds directories to measure. Sizes are `du`'s, so files cloned on APFS (`cp -c`) count in full in every copy.
 
 Endpoint-security and MDM agents can be grouped under *system / security* with `AGENTSCOPE_SYSTEM_HINTS="SomeAV:mdm-agent"` (colon-separated command-line substrings).
 
