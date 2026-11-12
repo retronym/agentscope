@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { machineBar } from '../hooks/pane'
+
 const RUN = { command: 'agentscope', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as const
 
 // A made-up session, as bin/session_view.py would print it.
@@ -70,24 +72,29 @@ test('/agentscope opens the pane, which shows the session on every surface', asy
     const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
 
     expect(texts).toEqual([
-      'This session (busy): 1.5 cores, 3.0 GB',
-      ' 1.3 cores   2.0 GB  sbt server (pid 11)',
-      'JVMs: 1',
-      ' 1.3 cores   2.0 GB  sbt server (pid 11)',
-      'bgrun jobs: none',
-      'PRs: 1',
-      'acme/widgets#7  DRAFT, CI FAILURE  Faster widgets',
-      'Spawned by (idle, parent00)',
-      'widget planning',
-      'Spawned sessions: 1',
-      '0.00 cores  waiting: permission  widget benchmarks (child000)',
-      'Other sessions using CPU: 4.2 cores',
-      ' 4.2 cores  busy, partest  gadget partest (noisy000)',
-      'Machine (10 cores, 32.0 GB), cores in use',
-      '  5.7  agents',
-      '  0.3  other',
+      'widget refactor',
+      '●', 'busy',
+      '1.5', 'cores', '3.0 GB', 'memory', '4.2', 'cores, other sessions',
+      'PROCESSES',
+      ' 1.3 cores', ' 2.0 GB', 'sbt server', 'pid 11',
+      'JVMS', '1',
+      ' 1.3 cores', ' 2.0 GB', 'sbt server', 'pid 11',
+      'PRS',
+      'draft', 'CI failure', 'Faster widgets',
+      'SESSION FAMILY',
+      '↑', '●', 'widget planning', 'idle, parent00',
+      '●', '0.00 cores', 'waiting: permission', 'widget benchmarks', 'child000',
+      'OTHER SESSIONS USING CPU', '4.2 cores',
+      '●', ' 4.2 cores', 'busy, partest', 'gadget partest', 'noisy000',
+      'MACHINE', '6.0 of 10 cores, 32.0 GB',
+      '■', '  5.7', 'agents',
+      '■', '  0.3', 'other',
       'as of 4s ago, asked every 10s while shown',
     ])
+    // the session's drawer on the dashboard, and the PR
+    expect((await ui.findAll({ type: 'Link' })).map(l => l.text)).toEqual(['Open in agentscope ↗', 'acme/widgets#7'])
+    // the machine's bar is drawn where the surface draws SVG; the terminal has the rows alone
+    expect(await ui.findAll({ type: 'Svg' })).toHaveLength(surface === 'terminal' ? 0 : 1)
     await ui.unmount()
   }
 })
@@ -132,7 +139,7 @@ test('with nowhere to draw a pane, /agentscope prints the same text', async ($, 
 
   const ran = await $.command.run(RUN)
   expect(ran.text).toContain('This session (busy): 1.5 cores, 3.0 GB\n   1.3 cores   2.0 GB  sbt server (pid 11)\nJVMs: 1')
-  expect(ran.text).toContain('(The pane is not shown: no-surface.)')
+  expect(ran.text).toContain('https://agentscope.localhost/#session=me000000-1\n(The pane is not shown: no-surface.)')
 })
 
 test('a job’s button shows the end of its log in the pane, and hides it again', async ($, on) => {
@@ -157,4 +164,10 @@ test('a job’s button shows the end of its log in the pane, and hides it again'
   await ui.press({ key: 'log-0101-120000-build' })
   expect(await ui.find({ type: 'Text', text: /last 40 lines/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('the machine bar gives each bucket its share of the cores', () => {
+  const svg = machineBar([['agents', 5], ['other', 2.5]], 10)
+  expect(svg).toContain('<rect x="0.0" width="200.0" height="8" fill="#2a78d6"/>')
+  expect(svg).toContain('<rect x="200.0" width="100.0" height="8" fill="#eda100"/>')
 })

@@ -37,7 +37,7 @@ export const register: Register = (on, options) => {
   }
 
   if (has('sessionPane')) {
-    pane(on)
+    pane(on, typeof options.dashboardUrl === 'string' && options.dashboardUrl !== '' ? options.dashboardUrl : undefined)
   }
 
   // One hook for every guard on Bash: each judges the commands the line starts, in turn, and the first reason refuses.
