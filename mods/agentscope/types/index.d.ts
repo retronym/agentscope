@@ -9,12 +9,40 @@ export type Job = {
   last: string
 }
 
+export type Proc = { label: string; pid: number; cores: number; rss: number }
+export type Peer = { sid: string; title: string; status: string; cores: number; top: string | null }
+export type Pr = { key: string; title: string; url: string | null; state: string; ci: string | null; review: string | null }
+
+/** This session as agentscope sees it: what bin/session_view.py prints. */
+export type View =
+  | { ok: false; error: string }
+  | {
+      ok: true
+      at: number
+      ncpu: number
+      mem_total: number
+      title: string | null
+      status: string
+      cores: number
+      rss: number
+      procs: Proc[]
+      jvms: Proc[]
+      prs: Pr[]
+      parent: Peer | null
+      spawned: Peer[]
+      others: Peer[]
+      others_cores: number
+      machine: Record<string, number>
+    }
+
 declare module 'claude-code' {
   interface PluginState {
     agentscope: {
       jobs: Shaped<Job[]>
       /** Ids of the jobs whose end has been said in a toast, so a reload does not say it again. */
       announced: Shaped<string[]>
+      /** The pane's last answer from agentscope; null before the first. */
+      view: Shaped<View | null>
     }
   }
 }

@@ -1,6 +1,26 @@
 {
   "name": "agentscope",
-  "version": "0.1.0",
-  "description": "Shows this session's bgrun jobs above the prompt, and refuses to start a benchmark while other sessions are loading the machine.",
-  "types": "./types/index.d.ts"
+  "version": "0.2.0",
+  "description": "Connects a session to agentscope: its bgrun jobs above the prompt, a pane showing the session as agentscope sees it (/agentscope), and a gate that refuses to start a benchmark while other sessions are loading the machine.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "jobsBand": {
+      "type": "boolean",
+      "title": "Jobs band",
+      "description": "Show this session's bgrun jobs above the prompt and say when one ends.",
+      "default": true
+    },
+    "sessionPane": {
+      "type": "boolean",
+      "title": "Session pane (/agentscope)",
+      "description": "The /agentscope command and its pane: this session's CPU, memory, JVMs, jobs, PRs and spawned sessions.",
+      "default": true
+    },
+    "loadGate": {
+      "type": "boolean",
+      "title": "Benchmark load gate",
+      "description": "Refuse perflab and JMH runs while other sessions use more than about one core. LOAD_GATE=off in the command overrides.",
+      "default": true
+    }
+  }
 }
