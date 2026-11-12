@@ -40,7 +40,8 @@ async function refresh($: EngineInterface) {
 }
 
 const proc = (p: Proc) => `${cores(p.cores).padStart(10)}  ${gb(p.rss).padStart(7)}  ${p.label} (pid ${p.pid})`
-const peer = (p: Peer) => `${cores(p.cores).padStart(10)}  ${cut(p.title, 48)} (${p.sid}, ${p.status}${p.top ? `, ${p.top}` : ''})`
+// what matters first: a row too long for the pane loses the end of the title
+const peer = (p: Peer) => `${cores(p.cores).padStart(10)}  ${p.status}${p.top ? `, ${p.top}` : ''}  ${cut(p.title, 60)} (${p.sid})`
 const job = (j: Job) => `${{ running: '▶', done: '✓', failed: '✗', lost: '?' }[j.state]} ${j.label}  ${j.head}${j.last ? `  ${cut(j.last, 60)}` : ''}`
 
 /** The pane as lines of text, a heading per section: what the pane draws, and what /agentscope prints where no pane can be shown. */
@@ -55,8 +56,8 @@ export const sections = (v: View | null, list: Job[]): { head: string; rows: str
 
   const machine = Object.entries(v.machine)
     .filter(([, n]) => n >= 0.05)
-    .map(([name, n]) => `${name} ${n.toFixed(1)}`)
-    .join(', ')
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, n]) => `${n.toFixed(1).padStart(5)}  ${name}`)
 
   return [
     {
@@ -69,15 +70,13 @@ export const sections = (v: View | null, list: Job[]): { head: string; rows: str
       head: `PRs: ${v.prs.length || 'none'}`,
       rows: v.prs.map(p => `${p.key}  ${p.state}${p.ci ? `, CI ${p.ci}` : ''}${p.review ? `, ${p.review}` : ''}  ${cut(p.title, 50)}`),
     },
-    {
-      head: `Spawned sessions: ${v.spawned.length || 'none'}`,
-      rows: [...(v.parent ? [`spawned by: ${cut(v.parent.title, 48)} (${v.parent.sid}, ${v.parent.status})`] : []), ...v.spawned.map(peer)],
-    },
+    ...(v.parent ? [{ head: `Spawned by (${v.parent.status}, ${v.parent.sid})`, rows: [cut(v.parent.title, 80)] }] : []),
+    { head: `Spawned sessions: ${v.spawned.length || 'none'}`, rows: v.spawned.map(peer) },
     {
       head: v.others.length > 0 ? `Other sessions using CPU: ${cores(v.others_cores)}` : 'Other sessions using CPU: none over 0.1 cores',
       rows: v.others.map(peer),
     },
-    { head: `Machine (${v.ncpu} cores, ${gb(v.mem_total)}), cores in use`, rows: machine ? [machine] : [] },
+    { head: `Machine (${v.ncpu} cores, ${gb(v.mem_total)}), cores in use`, rows: machine },
   ]
 }
 
