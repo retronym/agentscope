@@ -43,6 +43,8 @@ declare module 'claude-code' {
       announced: Shaped<string[]>
       /** The pane's last answer from agentscope; null before the first. */
       view: Shaped<View | null>
+      /** The handoff line last written for this session, so the file gets a line per change, not per turn. */
+      handoff: Shaped<string>
     }
   }
 }
