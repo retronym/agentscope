@@ -69,7 +69,7 @@ test('a running job shows its age and last line; a long-quiet one says so', asyn
   for (const surface of ['terminal', 'desktop'] as const) {
     expect(await lines($, surface)).toEqual([
       '▶ build ',
-      `3m  [info] compiling 12 sources ${'x'.repeat(40)}`,
+      `3m  [info] compiling 12 sources ${'x'.repeat(24)}`,
       '▶ soak ',
       '1h01m, silent 6m  7/20',
     ])
@@ -128,4 +128,24 @@ test('another session’s jobs, a half-written file and no jobs folder leave the
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await clock.settle()
   expect(await lines($, 'desktop')).toEqual([])
+})
+
+test('the first row has a button that opens the session pane', async ($, on) => {
+  const opened: string[] = []
+  const { clock } = world(on, [{ id: '0101-120000-build', label: 'build', start: T0 - 60, updated: T0, last_output: T0, last_line: 'compiling', exit: null }])
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+
+    return { value: { isPlaced: true } }
+  })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '{"ok":false,"error":"not running"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await ui.press({ key: 'open-pane' })
+  await clock.settle()
+  await ui.unmount()
+
+  expect(opened).toEqual(['agentscope'])
 })

@@ -128,9 +128,14 @@ export async function offerPane($: EngineInterface) {
   void traceOnce($).catch(() => undefined)
 }
 
+/** Opens the pane and asks agentscope now. The command and the band's button both come here. */
+export async function openPane($: EngineInterface) {
+  return Promise.all([$.ui.open({ id: PANE, title: TITLE }), refresh($)])
+}
+
 export const pane = (on: On) => {
   on('command.run', { command: 'agentscope' }, async $ => {
-    const [opened, v] = await Promise.all([$.ui.open({ id: PANE, title: TITLE }), refresh($)])
+    const [opened, v] = await openPane($)
 
     if (opened.isPlaced) {
       return { text: 'agentscope pane opened.' }

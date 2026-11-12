@@ -6,6 +6,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { Job } from '../types'
 import { endedAt, farewell, SHOW_ENDED_S, view } from './jobs'
 import type { Raw } from './jobs'
+import { openPane } from './pane'
 
 const jobs = atom({ plugin: 'agentscope', key: 'jobs' } as const, [], { shape: 'jobs-1' })
 const announced = atom({ plugin: 'agentscope', key: 'announced' } as const, [], { shape: 'announced-1' })
@@ -94,7 +95,10 @@ export function watchJobs($: EngineInterface) {
   $.clock.every(TICK_MS, safely)
 }
 
-export const band = (on: On) => {
+const OPEN = 'agentscope ›'
+
+/** With `withPane` (the session pane is on) the band's first row ends in a button that opens it. */
+export const band = (on: On, withPane = false) => {
   on('session.attach', ($, e, next) => {
     seen.attached = [...seen.attached, e.surface].slice(-10)
 
@@ -111,18 +115,23 @@ export const band = (on: On) => {
     }
 
     // one row per job: the last line is cut to the band's width, not wrapped
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
     const mark = { running: '▶', done: '✓', failed: '✗', lost: '?' } as const
     const color = { running: undefined, done: 'success', failed: 'error', lost: 'warning' } as const
 
     return (
       <Box flexDirection="column">
-        {list.map(j => (
+        {list.map((j, i) => (
           <Box>
             <Text color={color[j.state]}>
               {mark[j.state]} {j.label}{' '}
             </Text>
-            <Text dimColor>{`${j.head}${j.last ? `  ${j.last}` : ''}`.slice(0, Math.max(20, e.props.bodyColumns - j.label.length - 3))}</Text>
+            <Text dimColor>{`${j.head}${j.last ? `  ${j.last}` : ''}`.slice(0, Math.max(20, e.props.bodyColumns - j.label.length - 3 - (withPane && i === 0 ? OPEN.length + 4 : 0)))}</Text>
+            {withPane && i === 0 && (
+              <Box flexGrow={1} justifyContent="flex-end">
+                <Button key="open-pane" label={OPEN} onPress={() => void openPane($).catch(() => undefined)} />
+              </Box>
+            )}
           </Box>
         ))}
       </Box>

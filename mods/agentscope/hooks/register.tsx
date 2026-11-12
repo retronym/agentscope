@@ -33,7 +33,7 @@ export const register: Register = (on, options) => {
   })
 
   if (has('jobsBand')) {
-    band(on)
+    band(on, has('sessionPane'))
   }
 
   if (has('sessionPane')) {
