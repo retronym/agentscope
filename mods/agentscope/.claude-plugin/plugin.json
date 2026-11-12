@@ -1,6 +1,6 @@
 {
   "name": "agentscope",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Connects a session to agentscope and holds it to the working rules: bgrun jobs above the prompt, a pane showing the session as agentscope sees it (/agentscope), a load gate for benchmarks, a guard that sends long commands through bgrun, and limits and a handoff line for sessions started by another session.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -45,6 +45,12 @@
       "title": "Your GitHub owners",
       "description": "Owners (users or organizations) a spawned session may write to, separated by commas.",
       "default": "retronym"
+    },
+    "dashboardUrl": {
+      "type": "string",
+      "title": "agentscope page",
+      "description": "Where agentscope's page is served; the pane links to this session's drawer there.",
+      "default": "https://agentscope.localhost"
     },
     "handoffLine": {
       "type": "boolean",
