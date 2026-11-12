@@ -23,7 +23,7 @@ import argparse, atexit, collections, faulthandler, glob, json, os, re, signal, 
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
-import captures, helper, jvm, profiles, recording
+import captures, disk, helper, jvm, profiles, recording
 
 HOME = os.path.expanduser("~")
 DESKTOP_META = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
@@ -526,6 +526,7 @@ def db_init():
         c.executescript(jvm.SCHEMA)
         c.executescript(profiles.SCHEMA)
         c.executescript(captures.SCHEMA)
+        c.executescript(disk.SCHEMA)
         # one-off import of the JSONL history written by earlier versions
         for f in sorted(glob.glob(os.path.join(CACHE, "load-*.jsonl"))):
             rows_s, rows_b = [], []
@@ -551,6 +552,7 @@ def db_prune():
         c.execute("DELETE FROM bucket_minute WHERE t < ?", (now - AGG_RETENTION_DAYS * 86400,))
         jvm.prune(c, now)
         profiles.prune(c, now)
+        disk.prune(c, now)
         if _captures:
             _captures.prune(c, now)
     swept = profiles.gc(db, now)
@@ -789,6 +791,31 @@ def worktree_mentions():
     return _mentions["d"]
 
 
+def path_owner(path, kind, sessions):
+    """The session that last touched a measured directory (disk.py), or None: a scratchpad's is in its path; otherwise
+    the latest of the sessions running in it, created with it as their worktree, or whose tool calls named it."""
+    if kind == "scratch":
+        return os.path.basename(path)
+    inside = lambda p: p and (p == path or p.startswith(path + "/"))  # noqa: E731
+    last = {s["sid"]: s["last"] or 0 for s in sessions}
+    cands = [(s["last"] or 0, s["sid"]) for s in sessions if inside(s["cwd"])]
+    cands += [(last.get(sid, 0), sid) for sid, m in meta_cached().items() if inside(m.get("worktreePath"))]
+    cands += [(t, sid) for wp, ms in worktree_mentions().items() if inside(wp) for sid, t in ms]
+    return max(cands)[1] if cands else None
+
+
+def disk_state(sessions):
+    """disk.py's state, each grower with its session. None when nothing monitors the disk (the demo export)."""
+    if not _disk:
+        return None
+    st = _disk.state()
+    known = {s["sid"] for s in sessions}
+    for g in st["growers"]:
+        sid = path_owner(g["path"], g["kind"], sessions)
+        g["sid"] = sid if sid in known else None
+    return st
+
+
 def load_history(since, until=None):
     """[{t, s: {sid: [cpu, rss], "@bucket": [cpu, rss]}}] per minute, oldest first."""
     until = until or time.time() + 60
@@ -1002,7 +1029,7 @@ def build_state(sampler):
             proposals.append(dict(p, sid=s["sid"], lane=s["lane"], fate=resolved.get(p.get("task_id"), "unresolved")))
     return dict(now=time.time(), ncpu=NCPU, jvms=sampler.jvms.snapshot(time.time()), jvm_helper=_helper.unavailable(),
                 record=sampler.recorder.state(time.time()) if sampler.recorder else None,
-                asprof=bool(captures.asprof()) if sampler.recorder else False, capture_options=dict(options={k: v[1] for k, v in captures.OPTIONS.items()}, features=captures.FEATURES), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), sessions=sessions, prs=list(prs.values()), proposals=proposals,
+                asprof=bool(captures.asprof()) if sampler.recorder else False, capture_options=dict(options={k: v[1] for k, v in captures.OPTIONS.items()}, features=captures.FEATURES), claude_dirs=[os.path.basename(d).lstrip(".") for d in CLAUDE_DIRS], ui=max(os.path.getmtime(os.path.join(HERE, f)) for f in ("index.html", *STATIC)), mem_total=_memsize(), disk=disk_state(sessions), sessions=sessions, prs=list(prs.values()), proposals=proposals,
                 machine=cur.get("buckets", {}), orphans=cur.get("orphans", []), gh_t=gh["t"], gh_err=gh["err"], gh_login=gh["login"],
                 index_ready=_index_ready.is_set(), bucket=BUCKET,
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
@@ -1085,7 +1112,8 @@ def _memsize():
 
 _helper = helper.Helper()
 _captures = None  # set by serve()
-STATIC = ("static/jvm.js", "static/profile.js", "static/flame.js", "static/captures.js", "static/activity.js", "static/demo.js", "static/keys.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
+_disk = None  # set by serve(): a disk.Monitor
+STATIC = ("static/jvm.js", "static/profile.js", "static/flame.js", "static/captures.js", "static/activity.js", "static/demo.js", "static/keys.js", "static/disk.js", "static/jvm.css")  # scripts index.html loads; the demo export inlines them
 
 def serve(port):
     db_init()
@@ -1100,12 +1128,14 @@ def serve(port):
         sampler.hist.append((r["t"], sess, buckets))
     sampler.recorder = recording.Recorder(sampler.jvms, _helper, os.path.join(os.path.dirname(DB_FILE), "recording.json"), db)  # beside the db: a dev copy keeps its own
     sampler.recorder.stored_first()
-    global _captures
+    global _captures, _disk
     _captures = captures.Captures(db, _helper, sampler.jvms, os.path.join(os.path.dirname(DB_FILE), "captures"), sampler.recorder)
     atexit.register(sampler.recorder.stop_all)
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # run atexit (stop recordings) on kill, too
     threading.Thread(target=sampler.loop, args=(meta_cached,), daemon=True).start()
     threading.Thread(target=gh_loop, daemon=True).start()
+    _disk = disk.Monitor(db)
+    _disk.start()
 
     def index_loop():
         while True:
