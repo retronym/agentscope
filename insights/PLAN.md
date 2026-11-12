@@ -19,7 +19,7 @@ The main page shows now. Nothing showed what six weeks of sessions added up to: 
 - [x] 3. Synthesis: threads and lineage, patterns and friction, research ideas, lost ideas, last mile, loose ends, infra map and gaps.
 - [x] 4. `build.py` and the page at `/insights`: timeline × mindmap, sections, infra map; a standalone HTML; `report.py` for markdown.
 - [x] 5. Gaps filled: `hygiene.py` (work no remote has, scheduled tasks naming dead paths, disk), `upstream.py` (fork PR to upstream PR), `wholoads.py` (which session is loading the machine; exit status gates a timing run).
-- [ ] 6. Restart the launchd agentscope so `/insights` is served (it is still running the old code).
+- [x] 6. Restart the launchd agentscope so `/insights` is served.
 
 ## Future work
 
