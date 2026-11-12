@@ -306,7 +306,7 @@ test('a spawned session force-pushes only branches it created', { options: OPTIO
 
   expect(ran).toEqual([])
 
-  const own = ['git push --force-with-lease origin mine', 'git push -f origin side/widgets-1', 'git push origin feature']
+  const own = ['git push --force-with-lease origin mine 2>&1 | tail -3', 'git push -f origin side/widgets-1 > push.log', 'git push origin feature']
 
   for (const command of own) {
     expect(`${command} => ${await bash($, command)}`).toBe(`${command} => ran`)

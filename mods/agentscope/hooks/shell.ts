@@ -34,8 +34,11 @@ export const split = (line: string): string[][] => {
   const endPart = () => {
     endWord()
 
-    if (words.length > 0) {
-      parts.push(words)
+    // redirections are not arguments: `2>&1`, `>out.log`, `> out.log`, `< in`
+    const args = words.filter((w, i) => !/^\d*(>>?|<|&>)/.test(w) && !/^\d*(>>?|<|&>)$/.test(words[i - 1] ?? ''))
+
+    if (args.length > 0) {
+      parts.push(args)
     }
 
     words = []
