@@ -1,113 +1,126 @@
-// Two things an agent session cannot see for itself, taken from agentscope:
+// What an agent session cannot see for itself, taken from agentscope:
 //
 // 1. Its long-running commands. bin/bgrun keeps a state file per job; a band above the prompt shows each running job
 //    with its age and last line, and says when one ends, so nobody has to ask "progress?".
 // 2. Whether the machine is quiet. A timing run started while sibling sessions are compiling measures them, not the
 //    change. Before a benchmark command runs, ask agentscope who is using CPU and refuse, naming the sessions.
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { Job } from '../types'
+import { endedAt, farewell, SHOW_ENDED_S, view } from './jobs'
+import type { Raw } from './jobs'
 
 const jobs = atom({ plugin: 'agentscope', key: 'jobs' } as const, [], { shape: 'jobs-1' })
+const announced = atom({ plugin: 'agentscope', key: 'announced' } as const, [], { shape: 'announced-1' })
 
 // Commands whose numbers are only worth having on a quiet machine.
 const BENCH = /\bperflab\s+(run|ab)\b|\bjmh:run\b|\bJmh\/run\b|-jar\s+\S*(jmh|benchmarks)\S*\.jar\b/
 const OVERRIDE = /\bLOAD_GATE=off\b/ // `LOAD_GATE=off perflab run ...` runs anyway
 const QUIET_CORES = 1.0 // other sessions' CPU, averaged over the window, above which a run is refused
 const WINDOW_MIN = 2
-const SHOW_ENDED_S = 30 * 60
-const BEAT_S = 45 // bgrun rewrites a running job's file at least every 10 s; silent for longer, its supervisor is gone
+const TICK_MS = 5000
+const ANNOUNCE_S = 60 // an end older than this when first seen (a session resumed, the mod just installed) is not news
 
-const dur = (s: number) =>
-  s >= 3600 ? `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m` : s >= 60 ? `${Math.floor(s / 60)}m` : `${Math.round(s)}s`
+const jobsDir = async ($: EngineInterface) => `${await $.env.get('HOME')}/.cache/agentscope/jobs/${await $.session.id()}`
 
-type Raw = {
-  id: string
-  label?: string
-  start: number
-  updated?: number
-  end?: number | null
-  exit?: number | null
-  last_line?: string
-  progress?: string
-  last_output?: number | null
+/** This session's jobs worth showing: the running ones, and those that ended in the last half hour. */
+const readJobs = async ($: EngineInterface, now: number): Promise<Raw[]> => {
+  const dir = await jobsDir($)
+
+  if (!(await $.fs.exists(dir))) {
+    return []
+  }
+
+  // a running job's file is rewritten every 10 s, so an old file is an old job
+  const files = (await $.fs.list(dir)).filter(f => f.name.endsWith('.json') && now - f.mtimeMs / 1000 < SHOW_ENDED_S + 60)
+  const raws: Raw[] = []
+
+  for (const f of files) {
+    try {
+      const raw = JSON.parse(await $.fs.read(`${dir}/${f.name}`)) as Raw
+
+      if (typeof raw.id === 'string' && typeof raw.start === 'number') {
+        raws.push(raw)
+      }
+    } catch {
+      // a file caught mid-rename, or not a job: the next tick reads it again
+    }
+  }
+
+  return raws
 }
 
-const describe = (j: Raw, now: number): Job => {
-  const isOpen = j.exit === null || j.exit === undefined
-  const state = !isOpen ? (j.exit === 0 ? 'done' : 'failed') : now - (j.updated ?? j.start) < BEAT_S ? 'running' : 'lost'
-  const quiet = now - (j.last_output ?? j.start)
-  const head =
-    state === 'running'
-      ? dur(now - j.start) + (quiet > 300 ? `, silent ${dur(quiet)}` : '')
-      : state === 'lost'
-        ? 'lost: no exit recorded'
-        : `exit ${j.exit} after ${dur((j.end ?? now) - j.start)}, ${dur(now - (j.end ?? now))} ago`
+// For checking the mod against a live session: while ~/.cache/agentscope/mod-trace/ exists, each change to what the
+// band shows, each toast and the surface that last drew the band are written to <session id>.json there.
+const seen = { drawnBy: '', draws: 0, attached: [] as string[], toasts: [] as string[], last: '' }
 
-  return { id: j.id, label: j.label ?? j.id, state, head, last: (j.progress ?? j.last_line ?? '').slice(0, 160) }
+const trace = async ($: EngineInterface, band: Job[]) => {
+  const dir = `${await $.env.get('HOME')}/.cache/agentscope/mod-trace`
+  const text = JSON.stringify({ session: await $.session.id(), surfaces: await $.session.surfaces(), ...seen, last: undefined, band }, null, 1)
+
+  if (text !== seen.last && (await $.fs.exists(dir))) {
+    seen.last = text
+    await $.fs.write(`${dir}/${await $.session.id()}.json`, text)
+  }
+}
+
+const tick = async ($: EngineInterface) => {
+  const now = (await $.clock.now()) / 1000
+  const raws = await readJobs($, now)
+  const said = await read($, announced)
+  const news = raws.filter(j => {
+    const end = endedAt(j, now)
+
+    return end !== undefined && now - end < ANNOUNCE_S && !said.includes(j.id)
+  })
+
+  if (news.length > 0) {
+    await update($, announced, ids => [...ids, ...news.map(j => j.id)].slice(-100))
+    news.forEach(j => $.ui.toast(farewell(j), { timeoutMs: 15000 }))
+    seen.toasts = [...seen.toasts, ...news.map(farewell)].slice(-20)
+  }
+
+  const shown = raws
+    .filter(j => now - (endedAt(j, now) ?? now) < SHOW_ENDED_S)
+    .map(j => view(j, now))
+    .sort((a, b) => Number(a.state !== 'running') - Number(b.state !== 'running') || b.id.localeCompare(a.id))
+    .slice(0, 4)
+
+  // write only on a change: every write redraws the band
+  if (JSON.stringify(shown) !== JSON.stringify(await read($, jobs))) {
+    await update($, jobs, () => shown)
+  }
+
+  await trace($, shown)
 }
 
 export const register: Register = on => {
-  // What each job was last seen doing, to say so once when it ends. Lost on a reload, hence `isPrimed`.
-  const seen = new Map<string, Job['state']>()
-  let isPrimed = false
-
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-
-    const tick = async () => {
-      const dir = `${await $.env.get('HOME')}/.cache/agentscope/jobs/${await $.session.id()}`
-      const now = (await $.clock.now()) / 1000
-      const list: Job[] = []
-
-      if (await $.fs.exists(dir)) {
-        const files = (await $.fs.list(dir)).filter(f => f.name.endsWith('.json') && now - f.mtimeMs / 1000 < 86400)
-
-        for (const f of files) {
-          try {
-            const raw = JSON.parse(await $.fs.read(`${dir}/${f.name}`)) as Raw
-            const job = describe(raw, now)
-            const before = seen.get(job.id)
-            seen.set(job.id, job.state)
-
-            if (isPrimed && job.state !== 'running' && before !== job.state) {
-              $.ui.toast(`${job.label}: ${job.head.replace(/, \S+ ago$/, '')}`, { timeoutMs: 15000 })
-            }
-
-            if (job.state === 'running' || now - (raw.end ?? raw.updated ?? raw.start) < SHOW_ENDED_S) {
-              list.push(job)
-            }
-          } catch {
-            // a file caught mid-rename, or not a job: the next tick reads it again
-          }
-        }
-      }
-
-      isPrimed = true
-      list.sort((a, b) => Number(a.state !== 'running') - Number(b.state !== 'running') || b.id.localeCompare(a.id))
-      const shown = list.slice(0, 4)
-
-      // write only on a change: every write redraws the band
-      if (JSON.stringify(shown) !== JSON.stringify(await read($, jobs))) {
-        await update($, jobs, () => shown)
-      }
-    }
-
-    const safely = () => void tick().catch(() => undefined)
+    const safely = () => void tick($).catch(() => undefined)
     safely()
-    $.clock.every(5000, safely)
+    $.clock.every(TICK_MS, safely)
 
     return started
   })
 
+  on('session.attach', ($, e, next) => {
+    seen.attached = [...seen.attached, e.surface].slice(-10)
+
+    return next(e)
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const list = await read($, jobs)
+    seen.drawnBy = e.surface
+    seen.draws += 1
 
     if (e.props.hasSurvey || list.length === 0) {
       return next(e)
     }
 
+    // one row per job: the last line is cut to the band's width, not wrapped
     const { Box, Text } = $.ui.resolve(e)
     const mark = { running: '▶', done: '✓', failed: '✗', lost: '?' } as const
     const color = { running: undefined, done: 'success', failed: 'error', lost: 'warning' } as const
@@ -119,10 +132,7 @@ export const register: Register = on => {
             <Text color={color[j.state]}>
               {mark[j.state]} {j.label}{' '}
             </Text>
-            <Text dimColor>
-              {j.head}
-              {j.last ? `  ${j.last}` : ''}
-            </Text>
+            <Text dimColor>{`${j.head}${j.last ? `  ${j.last}` : ''}`.slice(0, Math.max(20, e.props.bodyColumns - j.label.length - 3))}</Text>
           </Box>
         ))}
       </Box>

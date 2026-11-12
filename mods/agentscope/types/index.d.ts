@@ -11,6 +11,10 @@ export type Job = {
 
 declare module 'claude-code' {
   interface PluginState {
-    agentscope: { jobs: Shaped<Job[]> }
+    agentscope: {
+      jobs: Shaped<Job[]>
+      /** Ids of the jobs whose end has been said in a toast, so a reload does not say it again. */
+      announced: Shaped<string[]>
+    }
   }
 }

@@ -4,3 +4,6 @@ profiler/target/
 
 # insights: copies of generated reports; they quote sessions
 insights/out/
+
+# mods: the engine lays its type declarations beside a loaded mod
+mods/*/.claude-plugin/types/
