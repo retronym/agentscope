@@ -34,7 +34,7 @@ Cards and rows stay put: they only reorder when a session's state or CPU tier ch
 
 ### Jobs: long commands that say how far they got
 
-A multi-hour build, benchmark or test run started by an agent is invisible until someone asks. `bin/bgrun` starts a command detached and keeps one small JSON file about it up to date: pid, start, the last line it printed and when, and the exit code once it has one. The session's card shows each running job with its age and last line (and how long it has been silent), and for half an hour after it ends, how it ended; a job whose supervisor died without recording an exit is marked lost. The drawer lists the last day's jobs with their logs.
+A multi-hour build, benchmark or test run started by an agent is invisible until someone asks. `bin/bgrun` starts a command detached and keeps one small JSON file about it up to date: pid, start, the last line it printed and when, and the exit code once it has one. The session's card shows each running job with its age and last line (and how long it has been silent), and for half an hour after it ends, how it ended; a job whose supervisor died without recording an exit is marked lost. The drawer lists the last day's jobs; each opens to its output, which follows the job while it runs.
 
 ```
 ln -s "$PWD/bin/bgrun" ~/bin/bgrun

@@ -1073,6 +1073,33 @@ def read_jobs(now, keep=86400):
     return out
 
 
+JOB_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+LOG_CHUNK = 256 << 10
+
+
+def job_log(sid, jid, start=None, first=64 << 10):
+    """Part of a bgrun job's log, for the drawer: its last `first` bytes when start is None, else what was written from
+    byte `start` on (at most LOG_CHUNK), so a reader can follow a running job by asking again from `size`. sid and jid
+    are single file names and the file must sit in the jobs directory: this reads nothing else."""
+    if not (JOB_NAME.fullmatch(sid or "") and JOB_NAME.fullmatch(jid or "")):
+        raise ValueError("bad job name")
+    path = os.path.realpath(os.path.join(JOBS, sid, jid + ".log"))
+    if os.path.dirname(os.path.dirname(path)) != os.path.realpath(JOBS):
+        raise ValueError("bad job name")
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            at = max(0, size - first) if start is None else min(max(0, start), size)
+            f.seek(at)
+            data = f.read(LOG_CHUNK)
+    except OSError:
+        return None
+    if start is None and at:  # begin on a whole line
+        cut = data.find(b"\n") + 1
+        at, data = at + cut, data[cut:]
+    return dict(start=at, size=at + len(data), total=size, text=data.decode("utf-8", "replace"))
+
+
 def zoom_path(q):
     """A flame graph's zoom path, from ?path=<JSON list of frame names>."""
     from urllib.parse import unquote
@@ -1183,6 +1210,9 @@ def serve(port):
                     self._send(200, json.dumps(search(unquote_plus(q.get("q", "")))), "application/json")
                 elif path == "/api/procs":
                     self._send(200, json.dumps(session_procs(q.get("sid", ""), float(q.get("since", 0)))), "application/json")
+                elif path == "/api/job/log":
+                    log = job_log(q.get("sid"), q.get("id"), int(q["from"]) if q.get("from") else None)
+                    self._send(200 if log else 404, json.dumps(log), "application/json")
                 elif path == "/api/top":
                     self._send(200, json.dumps(top_procs(float(q.get("t0", 0)), float(q.get("t1", time.time())), int(q.get("limit", 15)))), "application/json")
                 elif path.startswith("/static/") and path[1:] in STATIC:

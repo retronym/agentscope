@@ -1,0 +1,56 @@
+{
+  "name": "agentscope",
+  "version": "0.3.0",
+  "description": "Connects a session to agentscope and holds it to the working rules: bgrun jobs above the prompt, a pane showing the session as agentscope sees it (/agentscope), a load gate for benchmarks, a guard that sends long commands through bgrun, and limits and a handoff line for sessions started by another session.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "jobsBand": {
+      "type": "boolean",
+      "title": "Jobs band",
+      "description": "Show this session's bgrun jobs above the prompt and say when one ends.",
+      "default": true
+    },
+    "sessionPane": {
+      "type": "boolean",
+      "title": "Session pane (/agentscope)",
+      "description": "The /agentscope command and its pane: this session's CPU, memory, JVMs, jobs, PRs and spawned sessions.",
+      "default": true
+    },
+    "loadGate": {
+      "type": "boolean",
+      "title": "Benchmark load gate",
+      "description": "Refuse perflab and JMH runs while other sessions use more than about one core. LOAD_GATE=off in the command overrides.",
+      "default": true
+    },
+    "bgrunGuard": {
+      "type": "boolean",
+      "title": "bgrun guard",
+      "description": "Refuse known-long commands (sbt partest, scripted, test suites, mvn verify) that are not wrapped in bgrun. BGRUN=off in the command overrides.",
+      "default": true
+    },
+    "longCommands": {
+      "type": "string",
+      "title": "More long commands",
+      "description": "A regular expression; a command line it matches is also treated as long by the bgrun guard. Empty for none.",
+      "default": ""
+    },
+    "spawnedGuard": {
+      "type": "boolean",
+      "title": "Spawned-session guard",
+      "description": "In a session started by another session: refuse gh PR, issue, comment and review writes and pushes outside your own GitHub owners, and force-pushes to branches the session did not create.",
+      "default": true
+    },
+    "ownOwners": {
+      "type": "string",
+      "title": "Your GitHub owners",
+      "description": "Owners (users or organizations) a spawned session may write to, separated by commas.",
+      "default": "retronym"
+    },
+    "handoffLine": {
+      "type": "boolean",
+      "title": "Handoff line",
+      "description": "In a session started by another session: at the end of a turn, append repo, branch, pushed state and PR, taken from git and gh, to ~/.claude/side-sessions/<date>-<branch>.md.",
+      "default": true
+    }
+  }
+}

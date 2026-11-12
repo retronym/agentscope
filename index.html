@@ -113,6 +113,9 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .job { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
 .job .jl { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.joblog { margin: 0 0 4px 14px; }
+.joblog summary { cursor: pointer; }
+.joblog pre { max-height: 340px; overflow: auto; margin: 4px 0; padding: 6px 8px; font-family: var(--font-mono); font-size: 11px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
 .card.waiting { box-shadow: inset 3px 0 0 var(--warning); }
 .card.busy { box-shadow: inset 3px 0 0 var(--busy); }
 .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
@@ -458,6 +461,27 @@ function jobLine(j) {
     : j.state === 'lost' ? 'lost: no exit recorded' : `exit ${j.exit} · ${dur(j.end - j.start)} · ${ago(j.end)}`;
   return `<div class="job" title="${esc(j.cmd)}\n${esc(j.log || '')}"><i style="background:${c}"></i><b>${esc(j.label || j.id)}</b> <span class="when">${head}</span> <span class="jl">${esc(j.last_line)}</span></div>`;
 }
+// A job's log, read in the drawer: its tail when first opened, then what was written since, asked again each time the
+// drawer is rebuilt (a running job's line changes with every state), so an open log follows the job.
+const jobLogs = {};
+async function followJob(sid, id) {
+  const c = jobLogs[sid + '/' + id] ||= { text: '', size: null, stick: true };
+  if (c.busy) return;
+  c.busy = true;
+  try {
+    for (let more = true; more;) {
+      const r = await api(`/api/job/log?sid=${encodeURIComponent(sid)}&id=${encodeURIComponent(id)}${c.size === null ? '' : '&from=' + c.size}`);
+      if (c.size === null && r.start > 0) c.text = `… ${r.start} bytes earlier, in the file below\n`;
+      c.text = (c.text + r.text).slice(-400000);
+      c.size = r.size;
+      more = r.size < r.total;
+    }
+  } catch (e) { if (c.size === null) c.text = 'no log file for this job'; }
+  c.busy = false;
+  const pre = document.getElementById('jl-' + id);
+  if (pre && openSid === sid && pre.textContent !== c.text) { pre.textContent = c.text; if (c.stick) pre.scrollTop = pre.scrollHeight; }
+}
+const jobLog = (s, j) => `<details class="joblog" data-k="jl-${esc(j.id)}" ontoggle="this.open && followJob('${s.sid}', '${esc(j.id)}')"><summary class="when">${esc(j.id)} · ${j.lines} lines · output</summary><pre id="jl-${esc(j.id)}" onscroll="jobLogs['${s.sid}/${esc(j.id)}'].stick = this.scrollHeight - this.scrollTop - this.clientHeight < 30">${esc(jobLogs[s.sid + '/' + j.id]?.text || '')}</pre><div class="when">${esc(j.log || '')}</div></details>`;
 const cardJobs = s => (s.jobs || []).filter(j => j.state === 'running' || S.now - (j.end || j.start) < 1800).slice(0, 3).map(jobLine).join('');
 function prState(p) {
   if (p.state === 'MERGED') return { label: 'merged', c: 'var(--merged)', icon: '⇲' };
@@ -927,7 +951,7 @@ function drawerMeta(s) {
     ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
     ${s.load ? `<details data-k="procs"><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table class="pt">${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
-    ${(s.jobs || []).length ? `<div class="k">Jobs (bgrun)</div>${s.jobs.map(j => jobLine(j) + `<div class="when" style="margin:0 0 4px 14px">${esc(j.id)} · ${j.lines} lines · ${esc(j.log || '')}</div>`).join('')}` : ''}
+    ${(s.jobs || []).length ? `<div class="k">Jobs (bgrun)</div>${s.jobs.map(j => jobLine(j) + jobLog(s, j)).join('')}` : ''}
     ${jvmDrawer(s)}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
     <details id="phist" data-k="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>
