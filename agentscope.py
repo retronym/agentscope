@@ -1100,6 +1100,11 @@ def serve(port):
                 q = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
                 if path == "/":
                     self._send(200, open(os.path.join(HERE, "index.html")).read(), "text/html; charset=utf-8")
+                elif path == "/insights":  # the retrospective: insights/README.md
+                    self._send(200, open(os.path.join(HERE, "insights.html")).read(), "text/html; charset=utf-8")
+                elif path == "/api/insights":
+                    f = os.path.join(CACHE, "insights", "insights.json")
+                    self._send(200 if os.path.exists(f) else 404, open(f).read() if os.path.exists(f) else "{}", "application/json")
                 elif path == "/api/state":
                     self._send(200, json.dumps(build_state(sampler)), "application/json")
                 elif path == "/api/thread":

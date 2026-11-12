@@ -187,7 +187,9 @@ def digest(path, since, meta):
         body = keep_head + [f"\n[… middle of session thinned: {len(mid)} events, each cut to {per} chars …]"] + mid + keep_tail
     idx = {k: d[k] for k in ("sid", "path", "cwd", "title", "lane", "first", "last", "prompts", "turns", "interrupts", "corrections",
                              "denials", "tool_errors", "compactions", "api_errors", "out_tokens", "cost", "active_min", "subagents", "spawned")}
-    idx.update(prs=[k for k, _ in d["prs"].most_common(8)], issues=[k for k, _ in d["issues"].most_common(5)],
+    days = collections.Counter(time.strftime("%Y-%m-%d", time.localtime(b * A.BUCKET)) for b in d["buckets"])
+    idx.update(days={k: v * A.BUCKET // 60 for k, v in sorted(days.items())},
+               prs=[k for k, _ in d["prs"].most_common(8)], issues=[k for k, _ in d["issues"].most_common(5)],
                branches=[b for b, _ in d["branches"].most_common(3)], tools=dict(d["tools"].most_common(15)),
                models=list(d["models"]), skills=list(d["skills"]), spawned_from=m.get("spawnedFrom") or m.get("forkedFromSessionId"),
                desktop_id=m.get("sessionId"), archived=m.get("isArchived"),
@@ -199,6 +201,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--since", default="2026-10-01")
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--index-only", action="store_true", help="rewrite index.json, leave the digests alone")
     a = ap.parse_args()
     since = time.mktime(time.strptime(a.since, "%Y-%m-%d"))
     os.makedirs(os.path.join(a.out, "digests"), exist_ok=True)
@@ -212,7 +215,8 @@ def main():
             if not text:
                 continue
             idx["chars"] = len(text)
-            open(os.path.join(a.out, "digests", idx["sid"] + ".md"), "w").write(text)
+            if not a.index_only:
+                open(os.path.join(a.out, "digests", idx["sid"] + ".md"), "w").write(text)
             index.append(idx)
     index.sort(key=lambda i: i["first"])
     json.dump(index, open(os.path.join(a.out, "index.json"), "w"), indent=1)
