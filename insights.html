@@ -138,6 +138,7 @@ mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: i
 </header>
 <main>
   <div class="tiles" id="tiles"></div>
+  <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">The six weeks as a story</summary><p id="narrative" style="font: 15px/1.6 var(--font-prose); max-width: 980px; color: var(--ink-2); margin: 8px 0 0"></p></details>
 
   <h2 id="timeline">Timeline × mindmap</h2>
   <p class="sub">Time runs left to right. Each theme fans out into its threads of work; a ribbon is one thread, as thick as the hours it took that day. Dashed curves are threads that grew out of another. Diamonds are PRs. Click a ribbon for its sessions, ideas and loose ends; click a theme to fold it.</p>
@@ -146,6 +147,10 @@ mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: i
   <div class="legend" id="legend"></div>
 
   <div id="sections"></div>
+
+  <h2 id="local-only">Only on this machine</h2>
+  <p class="sub">Worktrees holding commits no remote has, or modified files: one prune or disk cleanup from gone. From <code>python3 -m insights.hygiene</code> and <code>insights.upstream</code>.</p>
+  <div id="hygiene"></div>
 
   <h2 id="infra-map">Dev infra map</h2>
   <p class="sub">What was built or leaned on to do this work, by layer, and where it has holes. Dashed red is a gap; green is a gap filled in this pass. Click a node to see what it connects to.</p>
@@ -196,7 +201,8 @@ async function boot() {
   D.themesAll = themes.filter(th => D.threads.some(t => t.theme === th.id));
   D.themesAll.forEach((th, i) => themeColor[th.id] = `var(--c${th.id === 'other' ? 9 : i % 9})`);
   if (D.themesAll.find(t => t.id === 'other')) folded.add('other');
-  tiles(); nav(); chips(); drawTimeline(); sections(); infra();
+  $('#narrative').textContent = D.narrative || '';
+  tiles(); nav(); chips(); drawTimeline(); sections(); hygiene(); infra();
   $('#q').addEventListener('input', e => { query = e.target.value.trim(); drawTimeline(); sections(); });
   document.addEventListener('keydown', e => {
     if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); }
@@ -211,7 +217,7 @@ function tiles() {
   $('#tiles').innerHTML = t.map(([v, l]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
 }
 function nav() {
-  $('#nav').innerHTML = `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#infra-map">Infra map</a>`;
+  $('#nav').innerHTML = `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
 }
 function chips() {
   const counts = {}; D.threads.forEach(t => counts[t.status || ''] = (counts[t.status || ''] || 0) + 1);
@@ -249,7 +255,7 @@ function drawTimeline() {
   const svg = $('#tl'); svg.innerHTML = '';
   const G = 210, PXD = Math.max(26, Math.floor(($('#tlwrap').clientWidth - G - 30) / D.ndays)), ROW = 26, TOP = 64;
   const x = i => G + i * PXD;
-  const half = m => Math.min(10.5, Math.sqrt(m) * .62);
+  const half = m => 11 * Math.tanh(Math.sqrt(m) / 16);  // saturates: a 10-hour day is not a wall
   // rows: per theme, pack threads into rows by [start, end + label]
   let y = TOP; const placed = [], themeRows = [];
   for (const th of D.themesAll) {
@@ -409,6 +415,30 @@ function openThread(id, focusSid) {
   if (focusSid) { const e = document.getElementById('s-' + focusSid); if (e) e.scrollIntoView({ block: 'center' }); } else $('#drawer').scrollTop = 0;
 }
 function closeDrawer() { $('#drawer').classList.remove('open'); if (sel) { sel = null; drawTimeline(); } }
+
+function hygiene() {
+  const h = D.hygiene || {}, up = D.upstream || [];
+  if (!h.at_risk) { $('#hygiene').innerHTML = '<p class="empty">Run <code>python3 -m insights.hygiene</code>.</p>'; return; }
+  const rel = p => p.replace(/^\/Users\/[^/]+/, '~'), named = h.at_risk.filter(t => t.branch), det = h.at_risk.filter(t => !t.branch);
+  const byRepo = {}; named.forEach(t => (byRepo[rel(t.repo)] = byRepo[rel(t.repo)] || []).push(t));
+  const verdicts = {}; up.forEach(r => verdicts[r.verdict] = (verdicts[r.verdict] || 0) + 1);
+  const bad = (h.scheduled || []).filter(s => s.missing.length);
+  $('#hygiene').innerHTML = `<div class="tiles" style="padding-top:0">
+      <div class="tile"><div class="v">${h.at_risk.length}</div><div class="l">of ${h.worktrees} worktrees hold local-only work</div></div>
+      <div class="tile"><div class="v">${named.reduce((a, t) => a + t.unpushed, 0)}</div><div class="l">unpushed commits on named branches</div></div>
+      <div class="tile"><div class="v">${h.at_risk.reduce((a, t) => a + t.dirty, 0)}</div><div class="l">modified, uncommitted files</div></div>
+      <div class="tile"><div class="v">${(h.missing || []).length}</div><div class="l">worktrees registered but gone</div></div>
+      <div class="tile"><div class="v">${h.disk.free_gb} GB</div><div class="l">disk free of ${h.disk.total_gb}</div></div>
+      <div class="tile"><div class="v">${up.length}</div><div class="l">open fork PRs (${Object.entries(verdicts).map(([k, v]) => v + ' ' + k).join(', ')})</div></div></div>
+    ${bad.length ? `<div class="card" style="margin:10px 0;border-color:var(--critical)"><h5>Scheduled tasks pointing at paths that no longer exist</h5>${bad.map(s => `<p><b>${esc(s.task)}</b>: ${s.missing.map(m => `<code>${esc(rel(m))}</code>`).join(', ')}</p>`).join('')}</div>` : ''}
+    <div class="cards">${Object.entries(byRepo).sort((a, b) => b[1].length - a[1].length).map(([repo, ts]) => `<div class="card"><h5>${esc(repo)} <span class="tag">${ts.length} branches</span></h5>
+      ${ts.slice(0, 14).map(t => `<div class="ev" data-tip="${esc(rel(t.path))}<br>${esc(t.unpushed_subjects.join('<br>'))}${t.dirty_files.length ? '<br>modified: ' + esc(t.dirty_files.join(', ')) : ''}"><div><span class="tag ${t.unpushed > 5 ? 'hi' : ''}">${t.unpushed} commits${t.dirty ? ' · ' + t.dirty + ' dirty' : ''}</span> <span style="font-family:var(--font-mono);font-size:11.5px">${esc(t.branch)}</span><br>${esc(t.last_subject.slice(0, 80))} · ${t.last_commit ? fmtDay(t.last_commit) : ''}</div></div>`).join('')}
+      ${ts.length > 14 ? `<p class="ev">and ${ts.length - 14} more</p>` : ''}</div>`).join('')}
+      <div class="card"><h5>Detached worktrees <span class="tag">${det.length}</span></h5><p>Bisect points, perf baselines and integration tips checked out without a branch. Mostly reproducible, but nothing names their commits.</p>
+      <div class="ev">${det.slice(0, 12).map(t => `<div>${t.unpushed} commits · ${esc(rel(t.path).split('/').slice(-2).join('/'))}</div>`).join('')}${det.length > 12 ? `<div>and ${det.length - 12} more</div>` : ''}</div></div>
+      ${up.filter(r => r.verdict !== 'fork only').length ? `<div class="card"><h5>Fork PRs with an upstream twin</h5>${up.filter(r => r.verdict !== 'fork only').map(r => `<div class="ev"><div><span class="tag ${r.verdict.startsWith('closable') ? 'ok' : ''}">${esc(r.verdict)}</span> <a href="${esc(r.url)}" target="_blank">${esc(r.key)}</a> ${esc(r.title.slice(0, 60))} → ${r.upstream.map(u => `<a href="${esc(u.url)}" target="_blank">${esc(u.key)}</a> ${esc(u.state.toLowerCase())}`).join(', ')}</div></div>`).join('')}</div>` : ''}
+    </div>`;
+}
 
 function infra() {
   const I = D.infra || {}, svg = $('#infra'); svg.innerHTML = '';

@@ -129,7 +129,8 @@ def main():
             g.update(fill="done", what=done)
     out = dict(generated=time.time(), since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
                sessions=sessions, prs=sorted(prs.values(), key=lambda p: p["created"]), repos=gh["repos"],
-               narrative=syn.get("narrative", ""), sections=sections, infra=infra)
+               narrative=syn.get("narrative", ""), sections=sections, infra=infra,
+               hygiene=load("hygiene.json", {}), upstream=[r for r in load("upstream.json", {}).get("rows", []) if r["state"] == "OPEN"])
     json.dump(out, open(os.path.join(OUT, "insights.json"), "w"))
     # one self-contained file, for reading away from the server
     page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "insights.html")).read()

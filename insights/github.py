@@ -6,6 +6,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -30,7 +31,7 @@ def gql(query, **vars):
     raise RuntimeError(f"gh: {r.stderr.strip()[:300]}")
 
 
-def search(q, pages=8):
+def search(q, pages=20):  # GitHub's search stops at 1000 results; split the range by month to go past that
     query = f"""query($q:String!,$after:String){{ search(query:$q, type:ISSUE, first:50, after:$after){{
       issueCount pageInfo {{ hasNextPage endCursor }} nodes {{ {ITEM} }} }} }}"""
     nodes, after = [], None
@@ -43,6 +44,14 @@ def search(q, pages=8):
     return nodes
 
 
+REF = re.compile(r"(?:github\.com/)?([\w.-]+/[\w.-]+)?(?:#|/pull/|/issues/)(\d+)")
+
+
+def refs(body, repo):
+    """Every PR or issue a body points at, as owner/repo#n; a bare #n is in the body's own repo."""
+    return sorted({f"{r or repo}#{n}" for r, n in REF.findall(body) if int(n) < 100000})
+
+
 def flat(n, role):
     return dict(key=f"{n['repository']['nameWithOwner']}#{n['number']}", kind="pr" if n["__typename"] == "PullRequest" else "issue",
                 role=role, repo=n["repository"]["nameWithOwner"], number=n["number"], title=n["title"], url=n["url"],
@@ -51,7 +60,7 @@ def flat(n, role):
                 merged=A.iso_to_epoch(n.get("mergedAt")), closed=A.iso_to_epoch(n.get("closedAt")),
                 head=n.get("headRefName"), base=n.get("baseRefName"), review=n.get("reviewDecision"),
                 adds=n.get("additions"), dels=n.get("deletions"), comments=n["comments"]["totalCount"],
-                body=(n.get("bodyText") or "")[:1200])
+                body=(n.get("bodyText") or "")[:1200], refs=refs(n.get("bodyText") or "", n["repository"]["nameWithOwner"]))
 
 
 def repos(since):
@@ -79,12 +88,19 @@ def main():
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     items = {}
-    for role, q in (("author", f"author:@me updated:>={a.since} sort:created-asc"),
-                    ("involved", f"involves:@me -author:@me updated:>={a.since} sort:updated-desc")):
+    # created in the period, a month at a time, plus older ones still being updated
+    y, m = int(a.since[:4]), int(a.since[5:7])
+    spans, now = [f"created:<{a.since} updated:>={a.since}"], time.strftime("%Y-%m")
+    while f"{y}-{m:02d}" <= now:
+        ny, nm = (y, m + 1) if m < 12 else (y + 1, 1)
+        spans.append(f"created:{max(a.since, f'{y}-{m:02d}-01')}..{ny}-{nm:02d}-01")
+        y, m = ny, nm
+    for role, q in (("author", "author:@me"), ("involved", "involves:@me -author:@me")):
         for kind in ("is:pr", "is:issue"):
-            for n in search(f"{kind} {q}"):
-                f = flat(n, role)
-                items.setdefault(f["key"], f)
+            for span in spans:
+                for n in search(f"{kind} {q} {span} sort:created-asc"):
+                    f = flat(n, role)
+                    items.setdefault(f["key"], f)
     rs = repos(a.since)
     json.dump(dict(since=a.since, fetched=time.time(), items=sorted(items.values(), key=lambda i: i["created"]), repos=rs),
               open(os.path.join(a.out, "github.json"), "w"), indent=1)

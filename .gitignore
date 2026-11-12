@@ -1,3 +1,6 @@
 __pycache__/
 dist/
 profiler/target/
+
+# insights: copies of generated reports; they quote sessions
+insights/out/

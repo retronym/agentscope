@@ -20,6 +20,10 @@ Running a dozen or more agent sessions across several repositories, the Claude a
 
 agentscope reads what Claude Code already records on your machine, joins it with your PRs on GitHub and the live process table, and puts it on one page that refreshes every few seconds.
 
+## Insights: a retrospective over weeks of sessions
+
+`/insights` answers what the live page can't: which lines of work the sessions formed (a timeline × mindmap of themes and threads), what friction recurred, which ideas were voiced once and lost, what is one push from shipping, what exists only on this machine, and a map of your dev infrastructure with its gaps. See [insights/README.md](insights/README.md).
+
 ## What you get
 
 ### Now
