@@ -43,6 +43,8 @@ declare module 'claude-code' {
       announced: Shaped<string[]>
       /** The pane's last answer from agentscope; null before the first. */
       view: Shaped<View | null>
+      /** The job whose log tail the pane shows, and that tail; null when none is open. */
+      log: Shaped<{ id: string; lines: string[] } | null>
       /** The handoff line last written for this session, so the file gets a line per change, not per turn. */
       handoff: Shaped<string>
     }

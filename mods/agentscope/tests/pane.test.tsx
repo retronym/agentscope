@@ -31,17 +31,23 @@ const PANE = {
 } as const
 
 /** A world where agentscope answers `answer()` and the pane is, or is not, given a place. */
-const world = (on: On, answer: () => string, isPlaced = true) => {
+const world = (on: On, answer: () => string, isPlaced = true, job?: Record<string, unknown>) => {
   const asked: (readonly string[])[] = []
   const clock = mock.clock(on, { now: 1_800_000_004_000 })
   mock.env(on, { HOME: '/home/dev' })
   on('session.id', () => ({ value: 'me000000-1' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('fs.exists', () => ({ value: false }))
+  on('fs.exists', (_, e) => ({ value: job !== undefined && e.path.endsWith('/jobs/me000000-1') }))
+  on('fs.list', () => ({ value: [{ name: `${String(job?.id)}.json`, kind: 'file' as const, size: 1, mtimeMs: 1_800_000_004_000, isLink: false }] }))
+  on('fs.read', () => ({ value: JSON.stringify(job) }))
   on('command.register', () => ({ value: { command: 'agentscope' } }))
   on('ui.open', () => ({ value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'no-surface' } }))
   on('ui.panes', () => ({ value: [{ id: 'agentscope', title: 'agentscope', isShown: isPlaced, isFocused: false, isPlaced }] }))
   on('process.run', (_, e) => {
+    if (e.argv[0] === 'tail') {
+      return { value: { exitCode: 0, stdout: `[info] compiling\n[info] done ${e.argv[3]}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+
     asked.push(e.argv)
 
     return { value: { exitCode: 0, stdout: answer(), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -127,4 +133,28 @@ test('with nowhere to draw a pane, /agentscope prints the same text', async ($, 
   const ran = await $.command.run(RUN)
   expect(ran.text).toContain('This session (busy): 1.5 cores, 3.0 GB\n   1.3 cores   2.0 GB  sbt server (pid 11)\nJVMs: 1')
   expect(ran.text).toContain('(The pane is not shown: no-surface.)')
+})
+
+test('a job’s button shows the end of its log in the pane, and hides it again', async ($, on) => {
+  const { clock } = world(on, () => JSON.stringify(VIEW), true, {
+    id: '0101-120000-build',
+    label: 'build',
+    start: 1_800_000_000 - 180,
+    updated: 1_800_000_004,
+    last_output: 1_800_000_004,
+    last_line: 'compiling',
+    exit: null,
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'log-0101-120000-build' })
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts).toContain('last 40 lines of 0101-120000-build.log')
+  expect(texts).toContain('[info] done /home/dev/.cache/agentscope/jobs/me000000-1/0101-120000-build.log')
+
+  await ui.press({ key: 'log-0101-120000-build' })
+  expect(await ui.find({ type: 'Text', text: /last 40 lines/ })).toBeUndefined()
+  await ui.unmount()
 })

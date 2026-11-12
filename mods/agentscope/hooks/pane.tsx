@@ -13,6 +13,9 @@ const POLL_MS = 10_000
 const jobs = atom({ plugin: 'agentscope', key: 'jobs' } as const, [], { shape: 'jobs-1' })
 const view = atom({ plugin: 'agentscope', key: 'view' } as const, null, { shape: 'view-1' })
 
+const log = atom({ plugin: 'agentscope', key: 'log' } as const, null, { shape: 'log-1' })
+const LOG_LINES = 40
+
 const gb = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : `${Math.round(bytes / 2 ** 20)} MB`)
 const cores = (n: number) => `${n.toFixed(n >= 10 ? 0 : n >= 1 ? 1 : 2)} cores`
 const cut = (text: string, n: number) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
@@ -32,9 +35,22 @@ async function ask($: EngineInterface): Promise<View> {
   }
 }
 
+/** The end of a job's log: bgrun keeps it beside the state file, control characters stripped. */
+async function tail($: EngineInterface, id: string) {
+  const path = `${await $.env.get('HOME')}/.cache/agentscope/jobs/${await $.session.id()}/${id}.log`
+  const ran = await $.process.run(['tail', '-n', String(LOG_LINES), path], { timeoutMs: 5000 })
+  const lines = ran.exitCode === 0 ? ran.stdout.replace(/\n$/, '').split('\n') : [`no log at ${path}`]
+  await update($, log, () => ({ id, lines }))
+}
+
 async function refresh($: EngineInterface) {
   const next = await ask($)
   await update($, view, () => next)
+  const open = await read($, log)
+
+  if (open) {
+    await tail($, open.id).catch(() => undefined)
+  }
 
   return next
 }
@@ -127,7 +143,9 @@ export const pane = (on: On) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Link, Text } = $.ui.resolve(e)
     const v = await read($, view)
-    const all = sections(v, await read($, jobs))
+    const list = await read($, jobs)
+    const open = await read($, log)
+    const all = sections(v, list)
     const age = v?.ok ? Math.max(0, Math.round((await $.clock.now()) / 1000 - v.at)) : undefined
 
     return (
@@ -147,6 +165,26 @@ export const pane = (on: On) => {
         {v?.ok && v.prs.some(p => p.url) && (
           <Box flexDirection="column">
             {v.prs.map(p => (p.url ? <Link href={p.url} label={p.key} /> : null))}
+          </Box>
+        )}
+        {list.length > 0 && (
+          <Box flexDirection="column">
+            <Box gap={1}>
+              <Text dimColor>Log:</Text>
+              {list.map(j => (
+                <Button
+                  key={`log-${j.id}`}
+                  label={open?.id === j.id ? `hide ${j.label}` : j.label}
+                  onPress={() => (open?.id === j.id ? update($, log, () => null) : tail($, j.id))}
+                />
+              ))}
+            </Box>
+            {open && <Text dimColor>{`last ${LOG_LINES} lines of ${open.id}.log`}</Text>}
+            {open?.lines.map(l => (
+              <Text mono wrap="wrap">
+                {l}
+              </Text>
+            ))}
           </Box>
         )}
         <Box gap={2}>
