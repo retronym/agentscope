@@ -1,0 +1,6 @@
+{
+  "name": "agentscope",
+  "version": "0.1.0",
+  "description": "Shows this session's bgrun jobs above the prompt, and refuses to start a benchmark while other sessions are loading the machine.",
+  "types": "./types/index.d.ts"
+}
