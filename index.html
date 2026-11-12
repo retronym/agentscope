@@ -46,6 +46,9 @@ html { overflow-anchor: none; }  /* Anchor (below) does it, by key */
 header { position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 header h1 { font: 500 19px/1 var(--font-prose); margin: 0 8px 0 0; letter-spacing: -.01em; }
 header h1 { display: inline-flex; align-items: center; gap: 8px; }
+header .navlink { color: var(--muted); text-decoration: none; font-size: 13px; margin-left: -8px; }
+header .navlink:hover { color: var(--ink); text-decoration: underline; }
+header.compact .navlink { display: none; }
 header h1 img { width: 22px; height: 22px; border-radius: 5px; }
 /* scrolled: one line of controls, no stat tiles (compactHeader) */
 header.compact { padding-top: 6px; padding-bottom: 6px; row-gap: 6px; }
@@ -287,6 +290,7 @@ dialog.keys-help::backdrop { background: rgba(0,0,0,.35); }
 </div>
 <header>
   <h1 id="h1"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E %3Crect width='64' height='64' rx='14' fill='%23262624'/%3E %3Crect x='10' y='16' width='30' height='7' rx='3.5' fill='%23d97757'/%3E %3Crect x='18' y='28.5' width='28' height='7' rx='3.5' fill='%23d97757' opacity='.72'/%3E %3Crect x='10' y='41' width='20' height='7' rx='3.5' fill='%23d97757' opacity='.45'/%3E %3Cline x1='51' y1='11' x2='51' y2='53' stroke='%23faf9f5' stroke-width='3' stroke-linecap='round'/%3E %3Ccircle cx='51' cy='32' r='4.5' fill='%23faf9f5'/%3E %3C/svg%3E" alt="">agentscope</h1>
+  <a class="navlink" id="nav-insights" href="/insights" title="A retrospective over weeks of sessions: threads, friction, lost ideas, loose ends">Insights</a>
   <div class="tile"><span class="v" id="t-live">–</span><span class="l">live sessions</span></div>
   <div class="tile"><span class="v" id="t-wait">–</span><span class="l">waiting on you</span></div>
   <div class="tile"><span class="v" id="t-cpu">–</span><span class="l">agent CPU (cores)</span></div>
@@ -352,6 +356,7 @@ function patch(el, html) {
 // The static export sets window.STATIC_DATA = {state, load, threads, procs, jvm_hist, profiles}; every API call is
 // answered from it (profiles by static/demo.js).
 const DEMO = !!window.STATIC_DATA;
+if (DEMO) document.getElementById('nav-insights').remove();  // the static export has no retrospective
 const nowSec = () => DEMO ? DemoProf.now() : Date.now() / 1000;
 function staticApi(url) {
   const D = window.STATIC_DATA, u = new URL(url, 'http://x'), q = Object.fromEntries(u.searchParams);
