@@ -107,6 +107,9 @@ section h2 .sub { text-transform: none; letter-spacing: 0; color: var(--muted); 
 .card .sum { color: var(--ink-2); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .card .load { display: flex; gap: 10px; align-items: center; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12px; }
+.job { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+.job .jl { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .card.waiting { box-shadow: inset 3px 0 0 var(--warning); }
 .card.busy { box-shadow: inset 3px 0 0 var(--busy); }
 .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
@@ -440,6 +443,16 @@ function sessionState(s) {
   if (s.archived) return { k: 'archived', label: '▪ archived', c: 'var(--axis)' };
   return { k: 'ended', label: '· not running', c: 'var(--axis)' };
 }
+// Long commands the session started with bgrun: what each last printed, and how it ended.
+const dur = s => s >= 3600 ? `${Math.floor(s / 3600)}h${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}m` : s >= 60 ? `${Math.floor(s / 60)}m` : `${Math.round(s)}s`;
+function jobLine(j) {
+  const run = j.state === 'running', quiet = run ? S.now - (j.last_output || j.start) : 0;
+  const c = run ? 'var(--busy)' : j.state === 'done' ? 'var(--good)' : 'var(--critical)';
+  const head = run ? `${dur(S.now - j.start)}${quiet > 300 ? `, silent ${dur(quiet)}` : ''}`
+    : j.state === 'lost' ? 'lost: no exit recorded' : `exit ${j.exit} · ${dur(j.end - j.start)} · ${ago(j.end)}`;
+  return `<div class="job" title="${esc(j.cmd)}\n${esc(j.log || '')}"><i style="background:${c}"></i><b>${esc(j.label || j.id)}</b> <span class="when">${head}</span> <span class="jl">${esc(j.last_line)}</span></div>`;
+}
+const cardJobs = s => (s.jobs || []).filter(j => j.state === 'running' || S.now - (j.end || j.start) < 1800).slice(0, 3).map(jobLine).join('');
 function prState(p) {
   if (p.state === 'MERGED') return { label: 'merged', c: 'var(--merged)', icon: '⇲' };
   if (p.state === 'CLOSED') return { label: 'closed', c: 'var(--muted)', icon: '✕' };
@@ -603,7 +616,7 @@ function renderCards() {
   list.forEach((s, i) => prevPos[s.sid] = i);
   // Sessions that want you or are doing something get a card; the rest are one line each in a list, GitHub's issue
   // list: state, lane, title and where it stands, PRs, when. Columns line up across the rows (subgrid).
-  const loud = s => { const k = sessionState(s).k; return k === 'busy' || k === 'waiting' || !!s.summary?.needs_action || (s.load?.cpu || 0) >= 50; };
+  const loud = s => { const k = sessionState(s).k; return k === 'busy' || k === 'waiting' || !!s.summary?.needs_action || (s.load?.cpu || 0) >= 50 || !!cardJobs(s); };
   const row = s => {
     const st = sessionState(s), detail = s.summary?.status_detail || s.report || '', prs = s.prs.filter(k => S.prMap[k]);
     return `<div class="srow ${st.k}" data-sid="${s.sid}" onclick="openDrawer('${s.sid}')">
@@ -626,6 +639,7 @@ function renderCards() {
       ${sum ? `<div class="sum">${lk(sum, s)}</div>` : ''}
       ${need ? `<div class="sum" style="color:var(--ink)"><b>⚑ needs you:</b> ${lk(need, s)}</div>` : ''}
       ${s.load ? `<div class="load">${spark(s)}<span>${cores(s.load.cpu)} cores</span><span>${gb(s.load.rss)}</span></div>${procs ? `<div class="meta">${procs}</div>` : ''}` : ''}
+      ${cardJobs(s)}
       ${jvmLine(s)}
       ${s.prs.length || Object.keys(s.issues).length ? `<div class="row">${s.prs.map(prChip).join('')}${issueChips(s)}</div>` : ''}
     </div>`;
@@ -905,6 +919,7 @@ function drawerMeta(s) {
     ${s.artifacts.length ? `<div class="k">Artifacts</div>${s.artifacts.map(a => `<div><a href="${esc(a.url)}" target="_blank">${esc(a.title || a.url)}</a></div>`).join('')}` : ''}
     ${parent || kids.length ? `<div class="k">Session family</div>${parent ? `<div>↑ <a href="#" onclick="openDrawer('${parent.sid}');return false">${esc(parent.title)}</a></div>` : ''}${kids.map(k => `<div>↳ <a href="#" onclick="openDrawer('${k.sid}');return false">${esc(k.title)}</a> <span class="when">${esc(sessionState(k).label)}</span></div>`).join('')}` : ''}
     ${s.load ? `<details data-k="procs"><summary class="k" style="cursor:pointer">Processes · ${cores(s.load.cpu)} cores, ${gb(s.load.rss)}</summary><table class="pt">${s.load.procs.slice(0, 25).map(p => `<tr><td>${p.pid}</td><td>${esc(p.label)}${p.how !== 'tree' ? ` <span class="when">via ${p.how}</span>` : ''}</td><td align="right">${p.cpu.toFixed(0)}%</td><td align="right">${gb(p.rss)}</td></tr>`).join('')}</table></details>` : ''}
+    ${(s.jobs || []).length ? `<div class="k">Jobs (bgrun)</div>${s.jobs.map(j => jobLine(j) + `<div class="when" style="margin:0 0 4px 14px">${esc(j.id)} · ${j.lines} lines · ${esc(j.log || '')}</div>`).join('')}` : ''}
     ${jvmDrawer(s)}
     ${s.proposals.length ? `<div class="k">Proposals made</div>${s.proposals.map(p => `<div>💡 <b>${esc(p.title)}</b> <span class="when">${esc(S.proposals.find(q => q.task_id === p.task_id)?.fate || '')}</span><div class="when">${esc(p.prompt.slice(0, 300))}</div></div>`).join('')}` : ''}
     <details id="phist" data-k="phist" ontoggle="this.open && loadProcHistory('${s.sid}')"><summary class="k" style="cursor:pointer">Process history</summary><div id="phist-body" class="empty">loading…</div></details>

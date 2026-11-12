@@ -32,6 +32,20 @@ Sessions waiting on you, working, or with something for you to decide get a card
 
 Cards and rows stay put: they only reorder when a session's state or CPU tier changes materially, and moves are animated. Status chips (*waiting for you*, *active*, *working*, *GitHub*) filter every view.
 
+### Jobs: long commands that say how far they got
+
+A multi-hour build, benchmark or test run started by an agent is invisible until someone asks. `bin/bgrun` starts a command detached and keeps one small JSON file about it up to date: pid, start, the last line it printed and when, and the exit code once it has one. The session's card shows each running job with its age and last line (and how long it has been silent), and for half an hour after it ends, how it ended; a job whose supervisor died without recording an exit is marked lost. The drawer lists the last day's jobs with their logs.
+
+```
+ln -s "$PWD/bin/bgrun" ~/bin/bgrun
+bgrun --label partest --progress 'tests' -- sbt partest    # returns at once with a job id
+bgrun wait partest                                         # blocks until it ends; exits with its status
+bgrun status                                               # this session's jobs, one line each
+bgrun stop partest                                         # TERM its process group, then KILL
+```
+
+Agents should read the state file or `bgrun wait`, not tail the log: the log is plain text (control characters stripped, a redrawn progress line logged once), but the exit code is only reliable in the JSON. State lives in `~/.cache/agentscope/jobs/<session id>/`.
+
 ### JVMs: a profiler for every build your agents start
 
 <img src="docs/screenshots/jvm-across.webp" alt="Across JVMs: one flame graph over every recorded JVM, rooted at session, JVM and activity">

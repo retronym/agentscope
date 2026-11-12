@@ -942,6 +942,7 @@ def build_state(sampler):
     with _gh_lock:
         gh = dict(_gh)
     live = cur.get("live", {})
+    jobs = read_jobs(time.time())
     sessions = []
     for sid in set(idx) | set(meta) | set(live):
         t, m, l = idx.get(sid, {}), meta.get(sid, {}), live.get(sid)
@@ -969,6 +970,7 @@ def build_state(sampler):
             live=dict(pid=l["pid"], status=l.get("status"), waiting=l.get("waitingFor"), name=l.get("name")) if l else None,
             load=load,
             spark=spark,
+            jobs=jobs.get(sid, [])[:8],
         ))
     # map local_* ids to cli ids for spawn edges
     local2cli = {s["local"]: s["sid"] for s in sessions if s["local"]}
@@ -1006,6 +1008,42 @@ def build_state(sampler):
                 machine_hist=[[round(h[0]), {k: v[0] for k, v in h[2].items()},
                                sorted(([sid, v[0]] for sid, v in h[1].items() if v[0] >= 5), key=lambda x: -x[1])[:8]]
                               for h in hist[-720:]])
+
+
+JOBS = os.path.join(CACHE, "jobs")
+
+
+def read_jobs(now, keep=86400):
+    """Long commands started with bin/bgrun, by session: what each last printed and how it ended. A job with no exit
+    code whose supervisor is gone is "lost". Finished jobs drop off after a day; their files after two weeks."""
+    out = {}
+    for f in glob.glob(os.path.join(JOBS, "*", "*.json")):
+        try:
+            j = json.load(open(f))
+            if j.get("exit") is not None:
+                state = "done" if j["exit"] == 0 else "failed"
+            else:
+                try:
+                    os.kill(j["supervisor"], 0)
+                    state = "running"
+                except (ProcessLookupError, TypeError):
+                    state = "lost"
+            t = j.get("end") or j.get("updated") or j["start"]
+            if state != "running" and now - t > keep:
+                if now - t > 14 * 86400:
+                    for x in (f, j.get("log")):
+                        if x and os.path.dirname(os.path.dirname(x)) == JOBS and os.path.exists(x):
+                            os.remove(x)
+                continue
+            out.setdefault(j["sid"], []).append(dict(
+                id=j["id"], label=j.get("label"), state=state, start=j["start"], end=j.get("end"), exit=j.get("exit"), pid=j.get("pid"),
+                last_line=j.get("progress") or j.get("last_line") or "", last_output=j.get("last_output"), lines=j.get("lines", 0),
+                cmd=" ".join(j.get("cmd") or [])[:300], cwd=j.get("cwd"), log=j.get("log")))
+        except (OSError, ValueError, KeyError):
+            continue
+    for js in out.values():
+        js.sort(key=lambda j: (j["state"] != "running", -j["start"]))
+    return out
 
 
 def zoom_path(q):

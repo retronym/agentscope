@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Run a long command detached, with a state file that says how far it got and how it ended.
+
+A multi-hour build or benchmark started by an agent is invisible: the only way to see it move is to ask, and the only
+completion signal is a line in a log that a watcher can miss behind terminal control characters. bgrun gives each run
+one small JSON file, rewritten as the command goes: pid, start, the last line it printed and when, and the exit code
+once it has one. Read that, not the log. agentscope shows the same file on the session's card.
+
+    bgrun --label partest -- sbt partest          start detached; prints the job id and returns
+    bgrun --label sweep 'for i in 1 2 3; do ./run $i; done'    one argument is a shell command line
+    bgrun --fg --label build -- make all          same, but stay until it ends and exit with its status
+    bgrun wait ID [--timeout S]                   block until the job ends; exit with its status (124 on timeout)
+    bgrun status [ID] [--all] [--json]            this session's jobs, or one job
+    bgrun stop ID                                 TERM the job's process group, KILL after 5 s
+
+State: ~/.cache/agentscope/jobs/<session id>/<job id>.json, with the plain-text log beside it as <job id>.log
+(control characters stripped; a line redrawn with carriage returns is logged once, as it last stood).
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import select
+import signal
+import subprocess
+import sys
+import time
+
+JOBS = os.path.join(os.environ.get("AGENTSCOPE_CACHE") or os.path.expanduser("~/.cache/agentscope"), "jobs")
+SID = os.environ.get("CLAUDE_CODE_SESSION_ID") or "no-session"
+# CSI and OSC sequences, two-byte escapes, then any other control character but tab
+CONTROL = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|[\x00-\x08\x0b-\x1f\x7f]")
+EXIT_TIMEOUT, EXIT_LOST = 124, 125
+
+
+def write_state(path, job):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(job, f, indent=1)
+    os.replace(tmp, path)  # readers never see half a file
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except (PermissionError, TypeError):
+        return pid is not None
+
+
+def state_of(job):
+    if job.get("exit") is not None:
+        return "done" if job["exit"] == 0 else "failed"
+    return "running" if alive(job.get("supervisor")) else "lost"  # its supervisor died without recording an exit
+
+
+def supervise(path, job, cmd, progress):
+    """Run cmd, copying its output to the log and what is known about it to the state file. Runs detached."""
+    log = open(job["log"], "w", buffering=1)
+    child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             start_new_session=True, env=dict(os.environ, BGRUN_JOB=path))
+    job.update(pid=child.pid, pgid=child.pid, supervisor=os.getpid())
+    signal.signal(signal.SIGTERM, lambda *_: os.killpg(child.pid, signal.SIGTERM))
+    write_state(path, job)
+    fd, buf, written, dirty = child.stdout.fileno(), "", time.time(), False
+    shown = lambda text: next((s for s in reversed(text.split("\r")) if s.strip()), "")  # a redrawn line, as it last stood
+
+    def line(text, final):
+        nonlocal dirty
+        text = CONTROL.sub("", shown(text)).rstrip()
+        if final:
+            log.write(text + "\n")
+            job["lines"] += 1
+        if text:
+            job.update(last_line=text[:400], last_output=time.time())
+            if progress and progress.search(text):
+                job["progress"] = text[:400]
+            dirty = True
+
+    while True:
+        chunk = os.read(fd, 65536) if select.select([fd], [], [], 1.0)[0] else None
+        if chunk:
+            job["bytes"] += len(chunk)
+            *whole, buf = (buf + chunk.decode("utf-8", "replace")).split("\n")
+            for text in whole:
+                line(text, True)
+            if buf:  # an unfinished line, e.g. a progress bar: it is the latest news, but not yet a log line
+                line(buf, False)
+                if len(buf) > 8192 and "\r" in buf:
+                    buf = buf[buf.rindex("\r", 0, len(buf) - 1):]
+        now = time.time()
+        if (dirty and now - written >= 1) or now - written >= 10:  # the 10 s beat shows the supervisor is alive
+            job["updated"] = now
+            write_state(path, job)
+            written, dirty = now, False
+        if chunk == b"":
+            break
+    if buf.strip():
+        line(buf, True)
+    rc = child.wait()
+    job.update(exit=rc if rc >= 0 else 128 - rc, signal=-rc if rc < 0 else None, end=time.time(), updated=time.time())
+    write_state(path, job)
+
+
+def start(a, cmd):
+    if not cmd:
+        sys.exit("bgrun: no command given")
+    argv = ["bash", "-c", cmd[0]] if len(cmd) == 1 else cmd
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", a.label or os.path.basename(cmd[0].split()[0])).strip("-")[:32] or "job"
+    jid = f"{time.strftime('%m%d-%H%M%S')}-{slug}"
+    d = os.path.join(JOBS, SID)
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, jid + ".json")
+    job = dict(id=jid, label=a.label or slug, sid=SID, cmd=cmd, cwd=os.getcwd(), start=time.time(), updated=time.time(), pid=None,
+               supervisor=None, last_line="", last_output=None, lines=0, bytes=0, exit=None, log=os.path.join(d, jid + ".log"))
+    if os.fork() == 0:  # detach: the job outlives the shell, the tool call and the session that started it
+        os.setsid()
+        if os.fork():
+            os._exit(0)
+        null = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(null, fd)
+        try:
+            supervise(path, job, argv, re.compile(a.progress) if a.progress else None)
+        except Exception as e:  # e.g. command not found: still leave a state file that says so
+            job.update(exit=127, end=time.time(), updated=time.time(), last_line=f"bgrun: {e}"[:400])
+            write_state(path, job)
+        os._exit(0)
+    for _ in range(50):
+        if os.path.exists(path):
+            break
+        time.sleep(0.1)
+    print(f"bgrun: started {jid}\n  state: {path}\n  log:   {job['log']}\n  then:  bgrun wait {jid}   (or read the state file; do not tail the log)")
+    if a.fg:
+        sys.exit(wait(find(jid), None))
+
+
+def find(jid):
+    hits = sorted(glob.glob(os.path.join(JOBS, SID, f"*{jid}*.json"))) or sorted(glob.glob(os.path.join(JOBS, "*", f"*{jid}*.json")))
+    if not hits:
+        sys.exit(f"bgrun: no job matching {jid}")
+    return hits[-1]
+
+
+def load(path):
+    for _ in range(3):
+        try:
+            return json.load(open(path))
+        except ValueError:
+            time.sleep(0.05)
+    sys.exit(f"bgrun: unreadable state file {path}")
+
+
+def dur(s):
+    s = int(s)
+    return f"{s // 3600}h{s % 3600 // 60:02d}m" if s >= 3600 else f"{s // 60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+def describe(job):
+    st, now = state_of(job), time.time()
+    ran = dur((job.get("end") or now) - job["start"])
+    if st == "running":
+        quiet = now - (job.get("last_output") or job["start"])
+        head = f"running {ran}" + (f", silent {dur(quiet)}" if quiet > 120 else "")
+    else:
+        head = {"done": "exit 0", "failed": f"exit {job.get('exit')}", "lost": "LOST (supervisor gone, no exit recorded)"}[st] + f" after {ran}"
+    return f"{job['id']}  [{job['label']}]  {head}  | {job.get('progress') or job.get('last_line') or ''}"[:300]
+
+
+def wait(path, timeout):
+    t0 = time.time()
+    while True:
+        job = load(path)
+        st = state_of(job)
+        if st != "running":
+            print(describe(job))
+            return EXIT_LOST if st == "lost" else job["exit"]
+        if timeout is not None and time.time() - t0 >= timeout:
+            print(describe(job))
+            return EXIT_TIMEOUT
+        time.sleep(1)
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv and argv[0] in ("wait", "status", "stop"):
+        ap = argparse.ArgumentParser(prog=f"bgrun {argv[0]}")
+        ap.add_argument("id", nargs=None if argv[0] != "status" else "?")
+        ap.add_argument("--timeout", type=float)
+        ap.add_argument("--all", action="store_true", help="every session's jobs")
+        ap.add_argument("--json", action="store_true")
+        a = ap.parse_args(argv[1:])
+        if argv[0] == "wait":
+            sys.exit(wait(find(a.id), a.timeout))
+        if argv[0] == "stop":
+            job = load(find(a.id))
+            if state_of(job) == "running" and job.get("pgid"):
+                os.killpg(job["pgid"], signal.SIGTERM)
+                if wait(find(a.id), 5) == EXIT_TIMEOUT:
+                    os.killpg(job["pgid"], signal.SIGKILL)
+                    wait(find(a.id), 5)
+            else:
+                print(describe(job))
+            return
+        paths = [find(a.id)] if a.id else sorted(glob.glob(os.path.join(JOBS, "*" if a.all else SID, "*.json")), key=os.path.getmtime)[-20:]
+        jobs = [dict(j, state=state_of(j)) for j in map(load, paths)]
+        print(json.dumps(jobs, indent=1) if a.json else "\n".join(map(describe, jobs)) or "no jobs")
+        return
+    ap = argparse.ArgumentParser(prog="bgrun", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--label", help="a short name for the run, shown on the session card")
+    ap.add_argument("--fg", action="store_true", help="wait for the job and exit with its status")
+    ap.add_argument("--progress", metavar="REGEX", help="keep the last line matching this as the job's progress")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER)
+    a = ap.parse_args(argv)
+    start(a, a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd)
+
+
+if __name__ == "__main__":
+    main()
