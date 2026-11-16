@@ -31,6 +31,65 @@ def load(name, default):
         return default
 
 
+def followups(index, sections, infra):
+    """Which sessions picked an item up after the synthesis was written: sets `followups` on those items, returns the summary.
+
+    The usual route from the page to work is a prompt that pastes an item ("start a session for: <item>"), so a session's pasted
+    prompts are matched against item titles and bodies. The follow-ups are the sessions started in answer to that prompt and
+    whatever those started in turn; if none was started, the session the item was pasted into did the work itself.
+    followups.json corrects it: {"analysed": epoch, "links": {item title or gap id: [sid prefix, ...]}, "drop": {the same}}.
+    """
+    manual = load("followups.json", {})
+    try:
+        analysed = manual.get("analysed") or os.path.getmtime(os.path.join(OUT, "synthesis", "threads.json"))
+    except OSError:
+        return dict(analysed=None, sessions=[], items=[])
+    norm = lambda s: re.sub(r"\W+", " ", s or "").lower().strip()
+    parent = lambda i: (i.get("spawned_from") or {}).get("sessionId") if isinstance(i.get("spawned_from"), dict) else i.get("spawned_from")
+    kids = collections.defaultdict(list)
+    for i in index:
+        if parent(i):
+            kids[parent(i)].append(i)
+    items = [(k, it) for k, its in sections.items() for it in its] + [("gaps", g) for g in infra.get("gaps", [])]
+    keys = [(norm(it.get("title")), norm((it.get("body") or "")[:70])) for _, it in items]
+    hits = collections.defaultdict(dict)  # item number -> {sid: how}
+    for i in index:
+        for p in i.get("pastes") or []:
+            if p["t"] < analysed:
+                continue
+            text = norm(p["text"])
+            for n, (title, body) in enumerate(keys):
+                if (len(title) > 12 and title in text) or (len(body) > 40 and body in text):
+                    started = [k for k in kids.get(i.get("desktop_id"), []) if (k.get("title") in p["spawned"]
+                               or (isinstance(k.get("spawned_from"), dict) and k["spawned_from"].get("title") in p["spawned"]))]
+                    for k in started:
+                        hits[n][k["sid"]] = "started for this"
+                    if not started:
+                        hits[n][i["sid"]] = "done in this session"
+    for n, (_, it) in enumerate(items):
+        for pre in (manual.get("links") or {}).get(it.get("id") or "", []) + (manual.get("links") or {}).get(it.get("title") or "", []):
+            for i in index:
+                if i["sid"].startswith(pre):
+                    hits[n].setdefault(i["sid"], "follow-up")
+    for n, (_, it) in enumerate(items):  # and what the matching got wrong
+        for pre in (manual.get("drop") or {}).get(it.get("id") or it.get("title") or "", []):
+            for sid in [s for s in hits.get(n, {}) if s.startswith(pre)]:
+                del hits[n][sid]
+    by_sid = {i["sid"]: i for i in index}
+    summary = []
+    for n, found in sorted((n, f) for n, f in hits.items() if f):
+        todo = [by_sid[s] for s, how in found.items() if how == "started for this"]
+        while todo:  # and what those sessions started in turn
+            for k in kids.get(todo.pop().get("desktop_id"), []):
+                if k["sid"] not in found:
+                    found[k["sid"]] = "started from a follow-up"
+                    todo.append(k)
+        kind, it = items[n]
+        it["followups"] = [dict(sid=s, how=how) for s, how in sorted(found.items(), key=lambda kv: by_sid[kv[0]]["first"])]
+        summary.append(dict(section=kind, title=it.get("title"), sids=[f["sid"] for f in it["followups"]]))
+    return dict(analysed=analysed, sessions=[i["sid"] for i in index if i["last"] > analysed], items=summary)
+
+
 def main():
     index = load("index.json", [])
     gh = load("github.json", dict(items=[], repos=[]))
@@ -127,7 +186,8 @@ def main():
         done = load("gaps_filled.json", {}).get(g.get("id"))
         if done:
             g.update(fill="done", what=done)
-    out = dict(generated=time.time(), since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
+    since_analysis = followups(index, sections, infra)
+    out = dict(generated=time.time(), since_analysis=since_analysis, since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
                sessions=sessions, prs=sorted(prs.values(), key=lambda p: p["created"]), repos=gh["repos"],
                narrative=syn.get("narrative", ""), sections=sections, infra=infra,
                hygiene=load("hygiene.json", {}), upstream=[r for r in load("upstream.json", {}).get("rows", []) if r["state"] == "OPEN"])

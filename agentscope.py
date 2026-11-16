@@ -143,13 +143,16 @@ def _text_of(content):
     return ""
 
 
+LEADING_REMINDERS = re.compile(r"\A(?:\s*<system-reminder>.*?</system-reminder>)+\s*", re.S)
+
+
 def _is_human_prompt(rec):
     if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
         return None
     c = (rec.get("message") or {}).get("content")
     if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
         return None
-    t = _text_of(c).strip()
+    t = LEADING_REMINDERS.sub("", _text_of(c).strip())  # the app prefixes a prompt with status blocks; what follows is still the prompt
     if not t or t.startswith(NOISE_PREFIX):
         return None
     return t

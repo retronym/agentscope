@@ -37,7 +37,8 @@ def digest(path, since, meta):
     d = dict(sid=sid, path=path, cwd=None, title=None, first=None, last=None, prompts=0, turns=0, interrupts=0, corrections=0,
              denials=0, tool_errors=0, compactions=0, api_errors=0, out_tokens=0, cost=None, models=collections.Counter(),
              tools=collections.Counter(), branches=collections.Counter(), prs=collections.Counter(), issues=collections.Counter(),
-             buckets=set(), spawned=[], skills=collections.Counter())
+             buckets=set(), spawned=[], skills=collections.Counter(), pastes=[])
+    paste = None
     events = []       # (t, kind, text)
     reply = None      # the agent's last text since the last human prompt
     for line in open(path, errors="replace"):
@@ -98,6 +99,8 @@ def digest(path, since, meta):
                         events.append((t, "agent-question", qs))
                     elif short == "start_session":
                         d["spawned"].append(inp.get("title"))
+                        if paste is not None and inp.get("title") and inp["title"] not in paste["spawned"]:
+                            paste["spawned"].append(inp["title"])
                         events.append((t, "session-proposal", f"[{inp.get('initiation')}] {inp.get('title')}: {clip(inp.get('prompt') or '', 500)}"))
                     elif short == "Skill":
                         d["skills"][inp.get("skill", "?")] += 1
@@ -138,6 +141,10 @@ def digest(path, since, meta):
         for repo, n in A.PR_URL.findall(hp):
             d["prs"][f"{repo}#{n}"] += 1
         events.append((t, kind, clip(hp, PROMPT_CAP)))
+        # a prompt that pastes something (an item off the insights page, say) and the sessions started in answer to it
+        paste = dict(t=t, text=hp.split(">", 1)[1][:500] if (hp := hp[hp.index("<pasted_content"):]) else "", spawned=[]) if "<pasted_content" in hp else None
+        if paste:
+            d["pastes"].append(paste)
     if reply:
         events.append((reply[0], "agent-final", clip(reply[1], REPLY_CAP * 2)))
     if d["last"] is None or d["last"] < since or not d["prompts"]:
@@ -186,7 +193,7 @@ def digest(path, since, meta):
         mid = [b[:per] + (" […]" if len(b) > per else "") for b in mid if "] agent\n" not in b[:40] or per > 600]
         body = keep_head + [f"\n[… middle of session thinned: {len(mid)} events, each cut to {per} chars …]"] + mid + keep_tail
     idx = {k: d[k] for k in ("sid", "path", "cwd", "title", "lane", "first", "last", "prompts", "turns", "interrupts", "corrections",
-                             "denials", "tool_errors", "compactions", "api_errors", "out_tokens", "cost", "active_min", "subagents", "spawned")}
+                             "denials", "tool_errors", "compactions", "api_errors", "out_tokens", "cost", "active_min", "subagents", "spawned", "pastes")}
     days = collections.Counter(time.strftime("%Y-%m-%d", time.localtime(b * A.BUCKET)) for b in d["buckets"])
     idx.update(days={k: v * A.BUCKET // 60 for k, v in sorted(days.items())},
                prs=[k for k, _ in d["prs"].most_common(8)], issues=[k for k, _ in d["issues"].most_common(5)],

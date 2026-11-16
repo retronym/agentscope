@@ -112,6 +112,14 @@ q, .q { font-family: var(--font-prose); font-style: italic; color: var(--ink-2);
 .card .ev a { color: var(--muted); }
 .card .ev div { margin: 3px 0; }
 .card.hide { display: none; }
+.card .fu { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 6px; font-size: 12.5px; }
+.card .fu b { color: var(--good); font-weight: 600; }
+.card .fu div { margin: 3px 0; }
+.card .fu .how { color: var(--muted); font-size: 11.5px; }
+.card.picked { border-color: color-mix(in srgb, var(--good) 55%, var(--border)); }
+#since .sess { padding: 6px 0; }
+#since details { margin-top: 10px; }
+#since summary { cursor: pointer; color: var(--muted); }
 mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: inherit; border-radius: 2px; }
 
 /* infra */
@@ -139,6 +147,8 @@ mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: i
 <main>
   <div class="tiles" id="tiles"></div>
   <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">The six weeks as a story</summary><p id="narrative" style="font: 15px/1.6 var(--font-prose); max-width: 980px; color: var(--ink-2); margin: 8px 0 0"></p></details>
+
+  <div id="since"></div>
 
   <h2 id="timeline">Timeline × mindmap</h2>
   <p class="sub">Time runs left to right. Each theme fans out into its threads of work; a ribbon is one thread, as thick as the hours it took that day. Dashed curves are threads that grew out of another. Diamonds are PRs. Click a ribbon for its sessions, ideas and loose ends; click a theme to fold it.</p>
@@ -202,8 +212,8 @@ async function boot() {
   D.themesAll.forEach((th, i) => themeColor[th.id] = `var(--c${th.id === 'other' ? 9 : i % 9})`);
   if (D.themesAll.find(t => t.id === 'other')) folded.add('other');
   $('#narrative').textContent = D.narrative || '';
-  tiles(); nav(); chips(); drawTimeline(); sections(); hygiene(); infra();
-  $('#q').addEventListener('input', e => { query = e.target.value.trim(); drawTimeline(); sections(); });
+  tiles(); nav(); chips(); drawTimeline(); since(); sections(); hygiene(); infra();
+  $('#q').addEventListener('input', e => { query = e.target.value.trim(); drawTimeline(); since(); sections(); });
   document.addEventListener('keydown', e => {
     if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); }
     if (e.key === 'Escape') { closeDrawer(); $('#q').blur(); }
@@ -217,7 +227,7 @@ function tiles() {
   $('#tiles').innerHTML = t.map(([v, l]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
 }
 function nav() {
-  $('#nav').innerHTML = `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
+  $('#nav').innerHTML = (D.since_analysis && D.since_analysis.items.length ? `<a href="#since-analysis">Since<span class="n">${D.since_analysis.items.length}</span></a>` : '') + `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
 }
 function chips() {
   const counts = {}; D.threads.forEach(t => counts[t.status || ''] = (counts[t.status || ''] || 0) + 1);
@@ -371,6 +381,24 @@ function evidence(ev) {
     return `<div>${e.quote ? `<span class="q">“${hl(e.quote)}”</span> ` : ''}${s ? `— <a href="#" onclick="openThread('${esc(s.thread)}','${s.sid}');return false">${esc(s.title.slice(0, 60))}</a>, ${fmtDay(s.first)}${claudeLink(s)}` : ''}${pr ? ` <a href="${esc(pr.url)}" target="_blank">${esc(e.pr)}</a>` : (e.pr ? ' ' + esc(e.pr) : '')}</div>`;
   }).join('');
 }
+const sessLine = (s, how) => `<div><a href="#" onclick="openThread('${esc(s.thread)}','${s.sid}');return false">${hl(s.title.slice(0, 70))}</a> ${badge(s.status)}${claudeLink(s)}` +
+  `${(s.prs || []).slice(0, 4).map(k => prByKey[k] ? ` <a href="${esc(prByKey[k].url)}" target="_blank">${esc(k)}</a>` : '').join('')}${how ? ` <span class="how">${esc(how)}, ${fmtDay(s.first)}</span>` : ''}</div>`;
+function followups(it) {
+  const fu = (it.followups || []).map(f => [sessById[f.sid], f.how]).filter(x => x[0]);
+  return fu.length ? `<div class="fu"><b>Picked up since:</b>${fu.map(([s, how]) => sessLine(s, how)).join('')}</div>` : '';
+}
+function since() {
+  const sa = D.since_analysis; if (!sa || !sa.analysed || !sa.sessions.length) { $('#since').innerHTML = ''; return; }
+  const label = Object.fromEntries(SECTIONS.map(([k, l]) => [k, l])); label.gaps = 'Infra gaps';
+  const linked = new Set(sa.items.flatMap(i => i.sids));
+  const rest = sa.sessions.map(sid => sessById[sid]).filter(s => s && !linked.has(s.sid) && s.status !== 'trivial').sort((a, b) => b.last - a.last);
+  const row = s => `<div class="sess"><div class="t">${sessLine(s)}</div>${s.outcome ? `<div class="o">${hl(s.outcome)}</div>` : ''}<div class="m">${fmtDay(s.first)} · ${hrs(s.active_min)} · ${esc(s.lane)}</div></div>`;
+  $('#since').innerHTML = `<h2 id="since-analysis">Since the analysis</h2>
+    <p class="sub">The ideas and gaps below were written on ${fmtDay(sa.analysed)}. ${sa.sessions.length} sessions have run since; these are the items they picked up, each with the sessions started for it and what those started in turn.</p>
+    <div class="cards">${sa.items.map(i => `<div class="card picked"><h5>${hl(i.title)}</h5><div class="tags"><span class="tag">${esc(label[i.section] || i.section)}</span><span class="tag ok">${i.sids.length} session${i.sids.length > 1 ? 's' : ''}</span></div>` +
+      i.sids.map(sid => sessById[sid]).filter(Boolean).map(s => `<div class="sess"><div>${sessLine(s)}</div>${s.outcome ? `<div class="o">${hl(s.outcome)}</div>` : ''}</div>`).join('') + `</div>`).join('')}</div>
+    ${rest.length ? `<details><summary>${rest.length} other sessions since, not tied to an item</summary>${rest.map(row).join('')}</details>` : ''}`;
+}
 function sections() {
   const q = query.toLowerCase();
   $('#sections').innerHTML = SECTIONS.map(([key, label, sub]) => {
@@ -379,12 +407,13 @@ function sections() {
       const txt = JSON.stringify(it).toLowerCase();
       const next = it.next_step || it.missing || it.action || it.fix;
       const tags = [];
+      if (it.added) tags.push(`<span class="tag ok">added ${esc(it.added)}</span>`);
       for (const k of ['kind', 'type', 'severity', 'impact', 'effort', 'cost', 'count', 'by']) if (it[k] != null && it[k] !== '') tags.push(`<span class="tag ${/high|large/.test(String(it[k])) && k !== 'effort' ? 'hi' : ''}">${k === 'kind' || k === 'type' ? '' : k + ': '}${esc(it[k])}</span>`);
       (Array.isArray(it.threads) ? it.threads : it.thread ? [it.thread] : []).forEach(t => { if (threadById[t]) tags.push(`<span class="tag thread" onclick="openThread('${esc(t)}')">⤷ ${esc(threadById[t].title.slice(0, 40))}</span>`); });
-      return `<div class="card ${q && !txt.includes(q) ? 'hide' : ''}"><h5>${hl(it.title)}</h5><div class="tags">${tags.join('')}</div><p>${hl(it.body || '')}</p>` +
+      return `<div class="card ${it.followups ? 'picked ' : ''}${q && !txt.includes(q) ? 'hide' : ''}"><h5>${hl(it.title)}</h5><div class="tags">${tags.join('')}</div><p>${hl(it.body || '')}</p>` +
         (it.exists ? `<p><b>Exists:</b> ${hl(it.exists)}</p>` : '') + (it.why ? `<p><b>Why it matters:</b> ${hl(it.why)}</p>` : '') +
         (next ? `<div class="next"><b>${key === 'last_mile' ? 'Missing' : key === 'friction' ? 'Fix' : 'Next'}:</b> ${hl(next)}</div>` : '') +
-        `<div class="ev">${evidence(it.evidence)}</div></div>`;
+        followups(it) + `<div class="ev">${evidence(it.evidence)}</div></div>`;
     }).join('') + `</div>`;
   }).join('');
 }
@@ -478,7 +507,7 @@ function infra() {
     const p = el('path', { class: 'edge', d, 'data-a': e.from, 'data-b': e.to }, gE);
     if (e.label) p.dataset.tip = `${esc(pos[e.from].n.name)} → ${esc(pos[e.to].n.name)}: ${esc(e.label)}`;
   });
-  $('#gaps').innerHTML = (I.gaps || []).map(g => `<div class="card"><h5>${esc(g.title)}</h5><div class="tags"><span class="tag ${g.fill === 'done' ? 'ok' : 'hi'}">${g.fill === 'done' ? 'filled' : 'open'}</span>${g.effort ? `<span class="tag">effort: ${esc(g.effort)}</span>` : ''}</div><p>${esc(g.body || '')}</p>${g.what ? `<div class="next"><b>${g.fill === 'done' ? 'Done' : 'Proposed'}:</b> ${esc(g.what)}</div>` : ''}<div class="ev">${evidence(g.evidence)}</div></div>`).join('');
+  $('#gaps').innerHTML = (I.gaps || []).map(g => `<div class="card"><h5>${esc(g.title)}</h5><div class="tags"><span class="tag ${g.fill === 'done' ? 'ok' : 'hi'}">${g.fill === 'done' ? 'filled' : 'open'}</span>${g.effort ? `<span class="tag">effort: ${esc(g.effort)}</span>` : ''}</div><p>${esc(g.body || '')}</p>${g.what ? `<div class="next"><b>${g.fill === 'done' ? 'Done' : 'Proposed'}:</b> ${esc(g.what)}</div>` : ''}${followups(g)}<div class="ev">${evidence(g.evidence)}</div></div>`).join('');
 }
 boot();
 </script>

@@ -14,11 +14,14 @@ A transcript is mostly tool output. Six weeks of sessions here was 2.7 GB, far m
 
 `build.py` joins all of it into `insights.json`, which the page reads, and a self-contained `insights-standalone.html`.
 
+To bring it up to date later, rerun the extract and build; sessions without a card show as unclassified until a reading pass cards them (write new batch files under `batches/`), and new thread slugs need a home in `synthesis/threads.json`.
+
 The reading and synthesis passes are run by a Claude Code session, not by these scripts: start one in this repo and ask it to redo the retrospective for a date range.
 
 ## The page
 
 - **Timeline × mindmap.** Time runs left to right. Themes fan out into threads; a thread is a ribbon whose thickness is the agent-active time that day, so the effort reads as a flow. Dashed curves join a thread to the one it grew out of. Diamonds are PRs. Clicking a ribbon opens its sessions, PRs, ideas (unpursued first), last mile and loose ends, each session with a link back into the Claude app.
+- **Since the analysis.** The items that sessions picked up after the synthesis was written, each with the sessions started for it and what those started in turn, linked back into the Claude app. The same links appear on the item's own card. They are found from prompts that paste an item ("start a session for: …"); `followups.json` in the data directory corrects what that misses.
 - **Patterns, Friction points, Research ideas, Lost ideas, Last mile needed, Loose ends.** Ranked cards, each with evidence quotes that link to the session they came from.
 - **Dev infra map.** What was built or leaned on, by layer, with a gap analysis: dashed red is a hole, green one that has since been filled (`gaps_filled.json`).
 
