@@ -120,6 +120,23 @@ q, .q { font-family: var(--font-prose); font-style: italic; color: var(--ink-2);
 #since .sess { padding: 6px 0; }
 #since details { margin-top: 10px; }
 #since summary { cursor: pointer; color: var(--muted); }
+#week .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px 32px; }
+#week .lead { grid-column: 1 / -1; font: 16px/1.5 var(--font-prose); margin: 0; max-width: 900px; }
+#week h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 4px; font-weight: 600; }
+#week h4:first-child { margin-top: 0; }
+#week ul { margin: 0; padding-left: 18px; }
+#week li { margin: 6px 0; color: var(--ink-2); max-width: 820px; }
+#week li b { color: var(--ink); font-weight: 600; }
+#week li .refs a { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-right: 8px; white-space: nowrap; }
+#week .bar { display: grid; grid-template-columns: minmax(0, 1fr) 46px; gap: 2px 8px; align-items: center; cursor: pointer; padding: 2px 0; }
+#week .bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#week .bar .h { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+#week .bar i { grid-column: 1 / -1; height: 4px; border-radius: 2px; display: block; }
+#week .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+#week .head h2 { flex: 1; }
+#week button { font: inherit; padding: 3px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
+#week .stale { color: var(--warning); }
+@media (max-width: 900px) { #week .panel { grid-template-columns: minmax(0, 1fr); } }
 mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: inherit; border-radius: 2px; }
 
 /* infra */
@@ -147,6 +164,8 @@ mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: i
 <main>
   <div class="tiles" id="tiles"></div>
   <details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">The six weeks as a story</summary><p id="narrative" style="font: 15px/1.6 var(--font-prose); max-width: 980px; color: var(--ink-2); margin: 8px 0 0"></p></details>
+
+  <div id="week"></div>
 
   <div id="since"></div>
 
@@ -212,8 +231,8 @@ async function boot() {
   D.themesAll.forEach((th, i) => themeColor[th.id] = `var(--c${th.id === 'other' ? 9 : i % 9})`);
   if (D.themesAll.find(t => t.id === 'other')) folded.add('other');
   $('#narrative').textContent = D.narrative || '';
-  tiles(); nav(); chips(); drawTimeline(); since(); sections(); hygiene(); infra();
-  $('#q').addEventListener('input', e => { query = e.target.value.trim(); drawTimeline(); since(); sections(); });
+  tiles(); nav(); chips(); drawTimeline(); week(); since(); sections(); hygiene(); infra();
+  $('#q').addEventListener('input', e => { query = e.target.value.trim(); drawTimeline(); week(); since(); sections(); });
   document.addEventListener('keydown', e => {
     if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); }
     if (e.key === 'Escape') { closeDrawer(); $('#q').blur(); }
@@ -227,7 +246,7 @@ function tiles() {
   $('#tiles').innerHTML = t.map(([v, l]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
 }
 function nav() {
-  $('#nav').innerHTML = (D.since_analysis && D.since_analysis.items.length ? `<a href="#since-analysis">Since<span class="n">${D.since_analysis.items.length}</span></a>` : '') + `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
+  $('#nav').innerHTML = (D.last_week && D.last_week.sessions ? `<a href="#last-week">Last week</a>` : '') + (D.since_analysis && D.since_analysis.items.length ? `<a href="#since-analysis">Since<span class="n">${D.since_analysis.items.length}</span></a>` : '') + `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
 }
 function chips() {
   const counts = {}; D.threads.forEach(t => counts[t.status || ''] = (counts[t.status || ''] || 0) + 1);
@@ -386,6 +405,36 @@ const sessLine = (s, how) => `<div><a href="#" onclick="openThread('${esc(s.thre
 function followups(it) {
   const fu = (it.followups || []).map(f => [sessById[f.sid], f.how]).filter(x => x[0]);
   return fu.length ? `<div class="fu"><b>Picked up since:</b>${fu.map(([s, how]) => sessLine(s, how)).join('')}</div>` : '';
+}
+/* The last seven days, for a standup: the written summary, where the time went, and the same thing as Markdown to paste. */
+function weekRange(w) {
+  const a = new Date(w.start * 1000), b = new Date(w.end * 1000), m = d => d.toLocaleDateString('en-AU', { month: 'short' });
+  return m(a) === m(b) ? `${a.getDate()}–${b.getDate()} ${m(b)}` : `${fmtDay(w.start)} – ${fmtDay(w.end)}`;
+}
+function weekMarkdown() {
+  const w = D.last_week, wr = w.written || {}, link = k => prByKey[k] ? `[${k}](${prByKey[k].url})` : k;
+  let md = `**${weekRange(w)}**: ${w.sessions} sessions, ${hrs(w.active_min)} of agent time, ${w.merged_upstream.length} PRs merged upstream, ${w.opened_upstream.length} opened upstream.\n`;
+  if (wr.headline) md += `\n${wr.headline}\n`;
+  for (const g of wr.groups || []) md += `\n**${g.title}**\n` + g.items.map(it => `- **${it.title}.** ${it.text}${(it.prs || []).length ? ' ' + it.prs.map(link).join(', ') : ''}`).join('\n') + '\n';
+  if (!(wr.groups || []).length) md += `\n**Merged upstream**\n` + w.merged_upstream.map(k => `- ${link(k)} ${prByKey[k] ? prByKey[k].title : ''}`).join('\n') + '\n';
+  return md;
+}
+function week() {
+  const w = D.last_week; if (!w || !w.sessions) { $('#week').innerHTML = ''; return; }
+  const wr = w.written || {}, top = w.threads.filter(t => threadById[t.id]).slice(0, 10), max = top.length ? top[0].min : 1;
+  const stale = wr.to && Date.parse(wr.to + 'T23:59:59') / 1000 < w.end - DAY;
+  const pr = k => prByKey[k] ? `<a href="${esc(prByKey[k].url)}" target="_blank" title="${esc(prByKey[k].title)}">${esc(k)}</a>` : esc(k);
+  const groups = (wr.groups || []).map(g => `<h4>${esc(g.title)}</h4><ul>` + g.items.map(it =>
+    `<li><b>${hl(it.title)}.</b> ${hl(it.text)} <span class="refs">${(it.prs || []).map(pr).join('')}</span>` +
+    (it.threads || []).filter(t => threadById[t]).map(t => `<span class="tag thread" onclick="openThread('${esc(t)}')">⤷ ${esc(threadById[t].title.slice(0, 36))}</span>`).join(' ') + `</li>`).join('') + `</ul>`).join('');
+  const merged = `<h4>Merged upstream (${w.merged_upstream.length})</h4>` + w.merged_upstream.map(k => `<a class="prl" href="${esc(prByKey[k].url)}" target="_blank"><span class="k">${esc(k)}</span> ${hl(prByKey[k].title)}</a>`).join('');
+  $('#week').innerHTML = `<div class="head"><h2 id="last-week">During the last week</h2><button id="weekCopy" title="The summary as Markdown, to paste into a standup thread">Copy as Markdown</button></div>
+    <p class="sub">${weekRange(w)} · ${w.sessions} sessions · ${hrs(w.active_min)} of agent time across ${w.threads.length} threads · ${w.merged_upstream.length} PRs merged upstream, ${w.opened_upstream.length} opened upstream, ${w.opened.length - w.opened_upstream.length} on forks.` +
+    (stale ? ` <span class="stale">The written summary is of the week to ${esc(wr.to)}; the numbers are current.</span>` : '') + `</p>
+    <div class="panel">${wr.headline ? `<p class="lead">${hl(wr.headline)}</p>` : ''}<div>${groups || merged}</div>
+    <div><h4>Where the time went</h4>${top.map(t => { const th = threadById[t.id]; return `<div class="bar" onclick="openThread('${esc(t.id)}')" title="${t.sessions.length} session${t.sessions.length > 1 ? 's' : ''}"><span>${hl(th.title)}</span><span class="h">${hrs(t.min)}</span><i style="width:${Math.max(2, 100 * t.min / max)}%;background:${themeColor[th.theme]}"></i></div>`; }).join('')}
+    ${groups ? merged : ''}</div></div>`;
+  $('#weekCopy').onclick = async e => { await navigator.clipboard.writeText(weekMarkdown()); e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy as Markdown', 1500); };
 }
 function since() {
   const sa = D.since_analysis; if (!sa || !sa.analysed || !sa.sessions.length) { $('#since').innerHTML = ''; return; }

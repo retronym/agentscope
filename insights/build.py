@@ -9,6 +9,7 @@ Inputs, all under ~/.cache/agentscope/insights/ (none of it is committed: it quo
   synthesis/threads.json            {themes:[{id,title,summary}], threads:[{id,title,theme,summary,status,slugs:[...],parents:[...]}]}
   synthesis/sections.json           {patterns, friction, research_ideas, lost_ideas, last_mile, loose_ends}
   synthesis/infra.json              {nodes, edges, gaps}
+  synthesis/last_week.json          the written standup summary of the last seven days: see last_week
 """
 import collections
 import glob
@@ -88,6 +89,34 @@ def followups(index, sections, infra):
         it["followups"] = [dict(sid=s, how=how) for s, how in sorted(found.items(), key=lambda kv: by_sid[kv[0]]["first"])]
         summary.append(dict(section=kind, title=it.get("title"), sids=[f["sid"] for f in it["followups"]]))
     return dict(analysed=analysed, sessions=[i["sid"] for i in index if i["last"] > analysed], items=summary)
+
+
+def last_week(sessions, threads, prs, place):
+    """The seven days up to the last day anything ran, for a standup: where the time went and which PRs moved, both derived, and the
+    written summary from synthesis/last_week.json, {to: "YYYY-MM-DD", headline, groups: [{title, items: [{title, text, prs, threads}]}]}.
+    The written part is of its own week: the page says so when the data has moved past it."""
+    end = max((d for s in sessions for d in s["days"]), default=time.strftime("%Y-%m-%d"))
+    t1 = time.mktime(time.strptime(end, "%Y-%m-%d")) + 86400
+    t0 = t1 - 7 * 86400
+    days = {time.strftime("%Y-%m-%d", time.localtime(t0 + i * 86400 + 43200)) for i in range(7)}
+    by_thread, n = collections.defaultdict(lambda: dict(min=0, sessions=[])), 0
+    for s in sessions:
+        m = sum(v for d, v in s["days"].items() if d in days)
+        if m:
+            n += 1
+            by_thread[s["thread"]]["min"] += m
+            by_thread[s["thread"]]["sessions"].append(s["sid"])
+    mine = [p for p in prs.values() if p["kind"] == "pr" and p["role"] == "author"]
+    hit = lambda k: sorted((p["key"] for p in mine if p.get(k) and t0 <= p[k] < t1), key=lambda key: prs[key][k])
+    upstream = lambda keys: [k for k in keys if not k.startswith("retronym/")]
+    merged, opened = hit("merged"), hit("created")
+    written = load("synthesis/last_week.json", {})
+    for g in written.get("groups", []):
+        for it in g.get("items", []):
+            it["threads"] = [place(t) for t in it.get("threads", []) if place(t) in threads]
+    return dict(start=t0, end=t1 - 1, sessions=n, active_min=sum(t["min"] for t in by_thread.values()),
+                threads=sorted((dict(id=k, **v) for k, v in by_thread.items()), key=lambda t: -t["min"]),
+                merged=merged, merged_upstream=upstream(merged), opened=opened, opened_upstream=upstream(opened), written=written)
 
 
 def main():
@@ -187,7 +216,8 @@ def main():
         if done:
             g.update(fill="done", what=done)
     since_analysis = followups(index, sections, infra)
-    out = dict(generated=time.time(), since_analysis=since_analysis, since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
+    week = last_week(sessions, threads, prs, place)
+    out = dict(generated=time.time(), last_week=week, since_analysis=since_analysis, since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
                sessions=sessions, prs=sorted(prs.values(), key=lambda p: p["created"]), repos=gh["repos"],
                narrative=syn.get("narrative", ""), sections=sections, infra=infra,
                hygiene=load("hygiene.json", {}), upstream=[r for r in load("upstream.json", {}).get("rows", []) if r["state"] == "OPEN"])
