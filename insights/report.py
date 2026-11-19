@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The retrospective as one markdown file, from the same insights.json the page reads.
 
-    python3 -m insights.report            # -> ~/.cache/agentscope/insights/REPORT.md
+    python3 -m insights.report            # -> ~/.cache/agentscope/insights/REPORT.md, and PERF.md when there is a perf-process section
 """
 import json
 import os
@@ -78,6 +78,52 @@ def main():
         o += [""] + [f"- Scheduled task **{x['task']}** names paths that no longer exist: {', '.join(x['missing'])}" for x in h.get("scheduled", []) if x["missing"]]
     open(os.path.join(OUT, "REPORT.md"), "w").write("\n".join(o) + "\n")
     print(f"{len(o)} lines -> {OUT}/REPORT.md")
+    perf(d)
+
+
+def perf(d):
+    """The perf-process section as a document of its own, PERF.md: what was achieved, how, and what is next."""
+    P = d.get("perf_process") or {}
+    if not P.get("lead"):
+        return
+    url = {p["key"]: p["url"] for p in d["prs"]}
+    prs = lambda x: " ".join(f"[{k}]({url[k]})" if k in url else k for k in x.get("prs") or [])
+    tail = lambda x: (" " + prs(x)) if x.get("prs") else ""
+    st = P.get("stats", {})
+    o = ["# How the compiler perf wins were found", "",
+         f"{st.get('sessions')} sessions and {round(st.get('active_min', 0) / 60)} h of agent time across {st.get('threads')} threads on the Scala 2 and Scala 3 compilers, "
+         f"Zinc and the tooling under them; {st.get('prs')} PRs touched, {st.get('merged_upstream')} merged upstream.", "", P["lead"], "", "## What was achieved", ""]
+    o += [f"- **{t['v']}** {t['l']}" for t in P.get("achieved", {}).get("tiles", [])] + [""]
+    for pl in P.get("achieved", {}).get("planks", []):
+        o += ["", f"### {pl['title']}", "", pl["summary"], ""]
+        o += [f"- {'(' + x['phase'] + ') ' if x.get('phase') else ''}**{x['title']}.** {x['text']}{tail(x)}" for x in pl.get("items", [])]
+    rows = [r for r in (P.get("ladder") or {}).get("rows", []) if r.get("ms") is not None]
+    if rows:
+        o += ["", f"### {P['ladder'].get('title', 'Step by step')}", "", P["ladder"].get("note", ""), "", "| Commit | PR | ms/op | Step | Against start |", "|---|---|---:|---:|---:|"]
+        o += [f"| {'**' if r['sig'] == 'better' else ''}{r['what']}{'**' if r['sig'] == 'better' else ''} | {r['pr']} | {r['ms']:.0f} | {r['step']} | {r['total']:.1f}% |" for r in rows]
+    if P.get("fractal"):
+        o += ["", "## The fractal nature of performance", "", P["fractal"]["text"], ""] + [f"- **{x['title']}.** {x['text']}{tail(x)}" for x in P["fractal"].get("cases", [])]
+    o += ["", "## How", "", "### The loop", ""] + [f"{i}. **{x['title']}.** {x['text']}" for i, x in enumerate(P.get("loop", []), 1)]
+    o += ["", "### Questions we posed", ""]
+    for x in P.get("questions", []):
+        o += [f"- *“{x['q']}”* {x['answer']} **How:** {x['how']}{tail(x)}"]
+    title = {x["id"]: x["title"] for x in P.get("loop", [])}
+    o += ["", "### Techniques", ""]
+    for stage in title:
+        ts = [t for t in P.get("techniques", []) if t["stage"] == stage]
+        if ts:
+            o += [f"**{title[stage]}**", ""] + [f"- **{t['name']}** ({', '.join(t.get('tools') or [])}). {t['what']}" + (f" For example: {t['example']}" if t.get("example") else "") + tail(t) for t in ts] + [""]
+    o += ["### How the tools were harnessed", "", "| Tool | Used to see | What we learned about it |", "|---|---|---|"]
+    o += [f"| {t['tool']} | {t['use']} | {' '.join(t.get('lessons') or [])} |".replace("\n", " ") for t in P.get("tools", [])]
+    o += ["", "## Where the wins were", ""]
+    for g in P.get("wins", []):
+        o += [f"### {g['waste']}", "", g["summary"], ""] + [f"- **{w['what']}** {w.get('effect', '')}{tail(w)}" + (f" Found by: {w['found_by']}" if w.get("found_by") else "") for w in g.get("items", [])] + [""]
+    o += ["## Measured and not worth it", ""] + [f"- **{x['what']}.** {x['why']}{tail(x)}" for x in P.get("dead_ends", [])]
+    o += ["", "## What misled us", ""] + [f"- **{x['belief']}** {x['truth']}" + (f" Caught by: {x['how']}" if x.get("how") else "") for x in P.get("corrections", [])]
+    o += ["", "## Rules of thumb this earned", ""] + [f"{i}. {x}" for i, x in enumerate(P.get("principles", []), 1)]
+    o += ["", "## Where the next opportunities are", ""] + [f"- **{x['title']}** ({x.get('kind', '')}). {x['why']} **Next:** {x['step']}{tail(x)}" for x in P.get("next", [])]
+    open(os.path.join(OUT, "PERF.md"), "w").write("\n".join(o) + "\n")
+    print(f"{len(o)} lines -> {OUT}/PERF.md")
 
 
 if __name__ == "__main__":

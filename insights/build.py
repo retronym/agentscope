@@ -9,6 +9,7 @@ Inputs, all under ~/.cache/agentscope/insights/ (none of it is committed: it quo
   synthesis/threads.json            {themes:[{id,title,summary}], threads:[{id,title,theme,summary,status,slugs:[...],parents:[...]}]}
   synthesis/sections.json           {patterns, friction, research_ideas, lost_ideas, last_mile, loose_ends}
   synthesis/infra.json              {nodes, edges, gaps}
+  synthesis/perf_process.json       how the compiler perf work was done, written from a second read of those sessions: see perf_process
   synthesis/last_week.json          the written standup summary of the last seven days: see last_week
 """
 import collections
@@ -119,6 +120,39 @@ def last_week(sessions, threads, prs, place):
                 merged=merged, merged_upstream=upstream(merged), opened=opened, opened_upstream=upstream(opened), written=written)
 
 
+def perf_process(sessions, threads, prs, place):
+    """How the compiler perf work was done, from synthesis/perf_process.json: {lead, achieved: {tiles, items}, loop: [{id, title, text}],
+    ladder: {title, note, url}, questions, techniques, tools, wins, dead_ends, corrections, next, principles}. Session ids in it are prefixes; they are made whole
+    here, thread slugs are placed, and the hours behind it are counted from the perf themes."""
+    pp = load("synthesis/perf_process.json", {})
+    if not pp:
+        return pp
+    full = lambda sid: next((s["sid"] for s in sessions if s["sid"].startswith(str(sid)[:8])), None)
+
+    def walk(x):
+        if isinstance(x, list):
+            for y in x:
+                walk(y)
+        elif isinstance(x, dict):
+            if "sids" in x:
+                x["sids"] = [f for f in map(full, x["sids"]) if f]
+            if "threads" in x:
+                x["threads"] = list(dict.fromkeys(place(t) for t in x["threads"] if place(t) in threads))
+            for y in x.values():
+                walk(y)
+    walk(pp)
+    rows = load("perf/inputs/ladder.json", [])  # a measured branch, one row per commit: {what, pr, ms, step, sig, total, label}
+    if rows:
+        pp["ladder"] = dict(load("perf/inputs/ladder_meta.json", {}), **(pp.get("ladder") or {}), rows=rows)
+    themes = set(pp.get("themes") or ["scala2-perf", "scala3-perf", "perf-tooling"])
+    mine = [s for s in sessions if threads[s["thread"]]["theme"] in themes]
+    keys = {k for s in mine for k in s["prs"]}
+    pp["stats"] = dict(sessions=len(mine), active_min=sum(s["active_min"] for s in mine), threads=len({s["thread"] for s in mine}),
+                       prs=sum(1 for k in keys if k in prs and prs[k]["kind"] == "pr"),
+                       merged_upstream=sum(1 for k in keys if k in prs and prs[k]["state"] == "MERGED" and not k.startswith("retronym/")))
+    return pp
+
+
 def main():
     index = load("index.json", [])
     gh = load("github.json", dict(items=[], repos=[]))
@@ -217,7 +251,8 @@ def main():
             g.update(fill="done", what=done)
     since_analysis = followups(index, sections, infra)
     week = last_week(sessions, threads, prs, place)
-    out = dict(generated=time.time(), last_week=week, since_analysis=since_analysis, since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
+    perf = perf_process(sessions, threads, prs, place)
+    out = dict(generated=time.time(), last_week=week, perf_process=perf, since_analysis=since_analysis, since=gh.get("since", "2026-10-01"), stats=stats, themes=syn["themes"], threads=out_threads,
                sessions=sessions, prs=sorted(prs.values(), key=lambda p: p["created"]), repos=gh["repos"],
                narrative=syn.get("narrative", ""), sections=sections, infra=infra,
                hygiene=load("hygiene.json", {}), upstream=[r for r in load("upstream.json", {}).get("rows", []) if r["state"] == "OPEN"])
@@ -226,6 +261,12 @@ def main():
     page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "insights.html")).read()
     blob = json.dumps(out).replace("</", "<\\/")
     open(os.path.join(OUT, "insights-standalone.html"), "w").write(page.replace("<script>\nconst $", f"<script>window.INSIGHTS = {blob};</script>\n<script>\nconst $", 1))
+    if perf:  # the perf write-up needs only its own part of the data, the PRs and the sessions it cites
+        cited = {sid for sid in re.findall(r'"([0-9a-f]{8}-[0-9a-f-]{27})"', json.dumps(perf))}
+        small = dict(generated=out["generated"], since=out["since"], perf_process=perf, prs=[p for p in out["prs"] if p["key"] in json.dumps(perf)],
+                     sessions=[dict(sid=s["sid"], title=s["title"], local=s["local"], archived=s["archived"]) for s in sessions if s["sid"] in cited])
+        doc = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "insights-perf.html")).read()
+        open(os.path.join(OUT, "perf-standalone.html"), "w").write(doc.replace("<script>\nconst $", "<script>window.INSIGHTS = " + json.dumps(small).replace("</", "<\\/") + ";</script>\n<script>\nconst $", 1))
     print(f"{stats['sessions']} sessions ({stats['carded']} carded), {len(out_threads)} threads, {len(prs)} PRs/issues -> {OUT}/insights.json "
           f"({os.path.getsize(os.path.join(OUT, 'insights.json')) // 1000} KB)")
 

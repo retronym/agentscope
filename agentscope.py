@@ -1200,6 +1200,8 @@ def serve(port):
                     self._send(200, open(os.path.join(HERE, "index.html")).read(), "text/html; charset=utf-8")
                 elif path == "/insights":  # the retrospective: insights/README.md
                     self._send(200, open(os.path.join(HERE, "insights.html")).read(), "text/html; charset=utf-8")
+                elif path == "/insights/perf":  # the perf write-up, a document of its own over the same data
+                    self._send(200, open(os.path.join(HERE, "insights-perf.html")).read(), "text/html; charset=utf-8")
                 elif path == "/api/insights":
                     f = os.path.join(CACHE, "insights", "insights.json")
                     self._send(200 if os.path.exists(f) else 404, open(f).read() if os.path.exists(f) else "{}", "application/json")

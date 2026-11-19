@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentscope · perf write-up</title>
+<style>
+/* A document, not a dashboard: one column of prose, references in the margin, three figures, tables with thin rules. */
+:root {
+  color-scheme: light;
+  --page: #faf9f5; --ink: #1a1915; --ink-2: #45433d; --muted: #7b796f; --rule: #d9d6c8; --hair: #e9e6da; --accent: #a6492b; --good: #2f6b3a;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; --page: #1d1c1a; --ink: #ece9df; --ink-2: #c4c1b5; --muted: #8f8c81; --rule: #45433d; --hair: #33322e; --accent: #e08a68; --good: #7fbf8a; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 17px/1.62 var(--serif); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 2px; }
+a:hover { text-decoration-color: var(--accent); }
+.page { max-width: 1010px; margin: 0 auto; padding: 44px 24px 120px; }
+.col { max-width: 690px; }
+.back { font: 12px var(--sans); color: var(--muted); letter-spacing: .04em; }
+.back a { text-decoration: none; }
+h1 { font: 400 40px/1.12 var(--serif); letter-spacing: -.015em; margin: 26px 0 10px; max-width: 820px; }
+.by { font: 13px/1.5 var(--sans); color: var(--muted); margin: 0 0 26px; }
+.abstract { font-size: 19px; line-height: 1.55; margin: 0 0 30px; }
+nav.toc { font: 13px/1.9 var(--sans); color: var(--ink-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 10px 0; margin: 0 0 8px; columns: 2; column-gap: 40px; }
+nav.toc a { text-decoration: none; display: block; }
+nav.toc .n { color: var(--muted); display: inline-block; width: 22px; font-variant-numeric: tabular-nums; }
+h2 { font: 400 28px/1.2 var(--serif); margin: 64px 0 12px; letter-spacing: -.01em; scroll-margin-top: 20px; }
+h2 .n, h3 .n { color: var(--muted); margin-right: 12px; font-variant-numeric: tabular-nums; }
+h3 { font: italic 400 21px/1.3 var(--serif); margin: 38px 0 8px; scroll-margin-top: 20px; }
+h4 { font: 600 12px/1.3 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--ink-2); margin: 28px 0 6px; }
+p { margin: 0 0 14px; }
+.item { margin: 0 0 11px; color: var(--ink-2); }
+.item b, .item i.h { color: var(--ink); }
+.item b { font-weight: 600; }
+.ph { font: 11px var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
+.eff { color: var(--good); font-variant-numeric: tabular-nums; }
+/* references sit in the margin on a wide screen and under the paragraph on a narrow one */
+.sn { display: block; font: 11.5px/1.5 var(--sans); color: var(--muted); margin: 3px 0 0; }
+.sn a { font-family: var(--mono); font-size: 11px; text-decoration: none; white-space: nowrap; margin-right: 8px; }
+.sn a.s { font-family: var(--sans); white-space: normal; }
+.sn a:hover { color: var(--accent); }
+@media (min-width: 1020px) { .sn { float: right; clear: right; width: 250px; margin: 5px -290px 6px 0; } }
+ol.loop { padding-left: 22px; margin: 6px 0 14px; }
+ol.loop li { margin: 0 0 7px; color: var(--ink-2); }
+ol.loop b { color: var(--ink); font-weight: 600; }
+ol.rules li { margin: 0 0 9px; }
+.qa { margin: 0 0 16px; }
+.qa .q { font-style: italic; }
+.qa .a { color: var(--ink-2); }
+.qa .how { font-size: 15px; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; margin: 8px 0 18px; font-size: 15px; line-height: 1.45; }
+table.wide { width: min(980px, calc(100vw - 48px)); table-layout: fixed; }
+th { font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--ink-2); vertical-align: bottom; }
+td { padding: 8px 14px 8px 0; border-bottom: 1px solid var(--hair); vertical-align: top; color: var(--ink-2); }
+td:first-child { color: var(--ink); }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 19px; color: var(--ink); width: 1%; padding-right: 22px; }
+td .sn { float: none; width: auto; margin: 3px 0 0; }
+tr.grp td { border-bottom: 1px solid var(--rule); padding-top: 20px; font: 600 11px var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--ink-2); }
+figure { margin: 26px 0 30px; width: min(980px, calc(100vw - 48px)); }
+figure svg { display: block; max-width: 100%; height: auto; }
+figure .scroll { overflow-x: auto; }
+figcaption { font: 12.5px/1.5 var(--sans); color: var(--muted); margin-top: 8px; max-width: 690px; }
+figcaption b { color: var(--ink-2); font-weight: 600; }
+svg text { font-family: var(--sans); fill: var(--muted); font-size: 10.5px; }
+svg .lab { fill: var(--ink-2); font-size: 11px; }
+svg .hd { fill: var(--ink-2); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; }
+.colophon { margin-top: 70px; padding-top: 14px; border-top: 1px solid var(--rule); font: 13px/1.6 var(--sans); color: var(--muted); max-width: 690px; }
+.empty { color: var(--muted); padding: 60px 0; font-family: var(--sans); }
+@media print { .back, nav.toc { display: none; } body { font-size: 11pt; } }
+</style>
+</head>
+<body>
+<div class="page" id="page"><p class="empty">Loading…</p></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const PHASES = [['parser', 'Parser, names'], ['typer', 'Namer, typer'], ['types', 'Types, symbols'], ['patmat', 'Patmat'], ['refchecks', 'Refchecks'], ['transforms', 'Transforms'], ['pickler', 'Pickler'], ['backend', 'Backend']];
+const AROUND = [['build', 'Build and Zinc: what is compiled at all'], ['jvm', 'The JVM underneath: JIT, GC, object layout'], ['whole', 'Whole compiler']];
+const R = { large: 6.5, medium: 4.6, small: 3, unmeasured: 3 };
+let D, P, prByKey = {}, sess = {};
+
+async function boot() {
+  try { D = window.INSIGHTS || await (await fetch('/api/insights')).json(); } catch (e) { D = null; }
+  P = D && D.perf_process;
+  if (!P || !P.title) { $('#page').innerHTML = `<p class="empty">No perf write-up yet: it is built from <code>synthesis/perf_process.json</code>.</p>`; return; }
+  D.prs.forEach(p => prByKey[p.key] = p);
+  D.sessions.forEach(s => sess[s.sid] = s);
+  document.title = P.title;
+  render();
+}
+const pr = k => prByKey[k] ? `<a href="${esc(prByKey[k].url)}" target="_blank" title="${esc(prByKey[k].title)} (${esc((prByKey[k].state || '').toLowerCase())})">${esc(k.replace('retronym/', 'r/'))}</a>` : `<a>${esc(k)}</a>`;
+const sref = sid => { const s = sess[sid]; if (!s) return ''; const t = esc(s.title.length > 48 ? s.title.slice(0, 46).replace(/\s+\S*$/, '') + '…' : s.title); return s.local && !s.archived ? `<a class="s" href="claude://code/continue?session=${encodeURIComponent(s.local)}" title="Open the session in the Claude app">§ ${t}</a>` : `<span>§ ${t}</span> `; };
+const note = x => { const h = (x.prs || []).map(pr).join(' ') + ' ' + (x.sids || []).slice(0, 2).map(sref).join(' '); return h ? `<span class="sn">${h}</span>` : ''; };
+const paras = a => (a || []).map(p => `<p>${esc(p)}</p>`).join('');
+const day = t => new Date(t * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+
+function render() {
+  const st = P.stats || {}, A = P.achieved || {}, pro = P.prose || {}, planks = A.planks || [];
+  const secs = [['achieved', 'What was achieved'], ['fractal', 'The fractal nature of performance'], ['how', 'How the work was done'], ['wins', 'Where the wins were'], ['misled', 'What misled us, and what did not pay'], ['rules', 'Rules of thumb'], ['next', 'Where the next opportunities are']].filter(([id]) => id !== 'fractal' || P.fractal);
+  const num = Object.fromEntries(secs.map(([id], i) => [id, i + 1]));
+  const h2 = id => `<h2 id="${id}"><span class="n">${num[id]}</span>${esc(secs.find(s => s[0] === id)[1])}</h2>`;
+  let sub = 0; const h3 = (sec, t, id) => `<h3 ${id ? `id="${id}"` : ''}><span class="n">${num[sec]}.${++sub}</span>${esc(t)}</h3>`;
+  const stage = Object.fromEntries((P.loop || []).map(s => [s.id, s.title]));
+
+  let h = `<div class="back"><a href="/insights">← agentscope · insights</a></div>
+  <div class="col"><h1>${esc(P.title)}</h1>
+  <p class="by">${day(Date.parse(D.since) / 1000)} to ${day(D.generated)} · ${st.sessions} agent sessions, ${Math.round(st.active_min / 60)} hours of agent time, ${st.threads} threads of work · ${st.prs} pull requests touched, ${st.merged_upstream} merged upstream</p>
+  <p class="abstract">${esc(P.abstract || P.lead)}</p>
+  <nav class="toc">${secs.map(([id, t]) => `<a href="#${id}"><span class="n">${num[id]}</span>${esc(t)}</a>`).join('')}</nav>`;
+
+  // 1 achieved
+  h += h2('achieved') + paras(pro.achieved);
+  if ((A.tiles || []).length) h += `<table>${A.tiles.map(t => `<tr><td class="num">${esc(t.v)}</td><td>${esc(t.l)}</td></tr>`).join('')}</table>`;
+  h += `</div><figure id="fig-map"></figure><div class="col">`;
+  sub = 0;
+  for (const pl of planks) {
+    h += h3('achieved', pl.title, 'plank-' + pl.id) + `<p>${esc(pl.summary)}</p>`;
+    h += (pl.items || []).map(x => `<div class="item">${note(x)}${x.phase && pl.id === 'serial' ? `<span class="ph">${esc((PHASES.concat(AROUND).find(p => p[0] === x.phase) || [0, x.phase])[1])}</span>` : ''}<b>${esc(x.title)}.</b> ${esc(x.text)}</div>`).join('');
+    if (pl.id === 'serial' && P.ladder && P.ladder.rows) h += `</div><figure id="fig-ladder"></figure><div class="col">`;
+  }
+  // 2 fractal
+  if (P.fractal) {
+    h += h2('fractal') + `<p>${esc(P.fractal.text)}</p></div><table class="wide"><tr><th style="width:24%">What was in the way</th><th style="width:24%">What it uncovered</th><th>What happened</th></tr>` +
+      (P.fractal.cases || []).map(c => `<tr><td>${esc(c.hid || c.title)}</td><td>${esc(c.revealed || '')}</td><td>${esc(c.text)}${note(c)}</td></tr>`).join('') + `</table><div class="col">`;
+  }
+  // 3 how
+  sub = 0;
+  h += h2('how') + paras(pro.how) + h3('how', 'The loop') + `<ol class="loop">${(P.loop || []).map(s => `<li><b>${esc(s.title)}.</b> ${esc(s.text)}</li>`).join('')}</ol>`;
+  h += h3('how', 'Questions we posed') + (P.questions || []).map(q => `<div class="qa">${note(q)}<div class="q">${esc(q.q)}</div><div class="a">${esc(q.answer)}</div><div class="how">${esc(q.how)}</div></div>`).join('');
+  h += h3('how', 'Techniques, by stage of the loop');
+  for (const s of P.loop || []) {
+    const ts = (P.techniques || []).filter(t => t.stage === s.id); if (!ts.length) continue;
+    h += `<h4>${esc(s.title)}</h4>` + ts.map(t => `<div class="item">${note(t)}<b>${esc(t.name)}.</b> ${esc(t.what)}${t.example ? ` <span style="color:var(--muted)">${esc(t.example)}</span>` : ''}${(t.tools || []).length ? ` <span class="ph" style="margin-left:4px">${esc(t.tools.join(' · '))}</span>` : ''}</div>`).join('');
+  }
+  const loose = (P.techniques || []).filter(t => !stage[t.stage]);
+  if (loose.length) h += `<h4>Across stages</h4>` + loose.map(t => `<div class="item">${note(t)}<b>${esc(t.name)}.</b> ${esc(t.what)} <span style="color:var(--muted)">${esc(t.example || '')}</span></div>`).join('');
+  h += h3('how', 'How the tools were harnessed') + `</div><table class="wide"><tr><th style="width:17%">Tool</th><th style="width:30%">Used to see</th><th>What we learned about it</th></tr>` +
+    (P.tools || []).map(t => `<tr><td>${esc(t.tool)}</td><td>${esc(t.use)}</td><td>${(t.lessons || []).map(esc).join(' ')}</td></tr>`).join('') + `</table><div class="col">`;
+  // 4 wins
+  h += h2('wins') + paras(pro.wins) + `</div><figure id="fig-grid"></figure><div class="col">`;
+  for (const g of P.wins || []) h += `<h4>${esc(g.waste)}</h4><p>${esc(g.summary)}</p>` + (g.items || []).map(w => `<div class="item">${note(w)}<b>${esc(w.what)}.</b> <span class="eff">${esc(w.effect || '')}</span>${w.found_by ? ` Found by ${esc(w.found_by.replace(/^[A-Z]/, c => c.toLowerCase()))}${/[.!?]$/.test(w.found_by) ? '' : '.'}` : ''}</div>`).join('');
+  // 5 misled
+  h += h2('misled') + paras(pro.misled) + `</div><table class="wide"><tr><th style="width:30%">We believed</th><th style="width:36%">It was</th><th>What showed it</th></tr>` +
+    (P.corrections || []).map(c => `<tr><td>${esc(c.belief)}</td><td>${esc(c.truth)}</td><td>${esc(c.how || '')}</td></tr>`).join('') + `</table>
+    <table class="wide"><tr><th style="width:34%">Measured, and not worth it</th><th>Why</th></tr>` + (P.dead_ends || []).map(c => `<tr><td>${esc(c.what)}${note(c)}</td><td>${esc(c.why)}</td></tr>`).join('') + `</table><div class="col">`;
+  // 6 rules
+  h += h2('rules') + `<ol class="rules">${(P.principles || []).map(x => `<li>${esc(x)}</li>`).join('')}</ol>`;
+  // 7 next
+  const plankTitle = Object.fromEntries(planks.map(p => [p.id, p.title])); plankTitle.tooling = 'Tooling';
+  const order = [...planks.map(p => p.id), 'tooling', ''], nx = P.next || [];
+  h += h2('next') + paras(pro.next) + `</div><table class="wide"><tr><th style="width:24%">Opportunity</th><th style="width:11%">State</th><th style="width:36%">Why it is worth doing</th><th>Next step</th></tr>`;
+  for (const id of order) {
+    const xs = nx.filter(x => (x.plank || '') === id || (id === '' && !order.includes(x.plank || ''))); if (!xs.length) continue;
+    h += `<tr class="grp"><td colspan="4">${esc(plankTitle[id] || 'Other')}</td></tr>` + xs.map(x => `<tr><td>${esc(x.title)}${note(x)}</td><td>${esc(x.kind || '')}</td><td>${esc(x.why)}</td><td>${esc(x.step)}</td></tr>`).join('');
+  }
+  h += `</table><div class="colophon">Written from ${st.sessions} Claude Code session transcripts. Readers went back over each for method (techniques, questions, tool use, wrong turns) and one writer merged their notes with the session cards and the measured branch; numbers are as the sessions and the perflab campaigns report them and were not re-run for this document. The same text is in <code>PERF.md</code> beside the insights data.</div></div>`;
+  $('#page').innerHTML = h;
+  drawMap(); if (P.ladder && P.ladder.rows) drawLadder(P.ladder); drawGrid();
+}
+
+const marks = () => (P.wins || []).flatMap(g => (g.items || []).map(w => ({ ...w, waste: g.waste })));
+const isFix = w => w.plank === 'correctness' || /^correct/i.test(w.waste || '');
+function glyph(w, x, y) {
+  const r = R[w.size] || 3, t = `<title>${esc(w.what)}${w.effect ? '\n' + esc(w.effect) : ''}${(w.prs || []).length ? '\n' + esc(w.prs.join(' ')) : ''}</title>`;
+  if (isFix(w)) return `<path d="M${x} ${y - 4.6}L${x + 4.6} ${y}L${x} ${y + 4.6}L${x - 4.6} ${y}Z" fill="none" stroke="var(--accent)" stroke-width="1.4">${t}</path>`;
+  if (w.plank === 'parallel') return `<rect x="${x - 3.6}" y="${y - 3.6}" width="7.2" height="7.2" fill="none" stroke="var(--ink)" stroke-width="1.4">${t}</rect>`;
+  return `<circle cx="${x}" cy="${y}" r="${r}" fill="var(--ink)" fill-opacity="${w.size === 'unmeasured' ? 0 : .82}" stroke="var(--ink)" stroke-width="1">${t}</circle>`;
+}
+/* marks packed left to right, top to bottom, in a box */
+function pack(ws, x0, y0, w, step = 15) {
+  const per = Math.max(1, Math.floor(w / step)), order = { large: 0, medium: 1, small: 2, unmeasured: 3 };
+  ws = [...ws].sort((a, b) => (isFix(a) - isFix(b)) || ((order[a.size] ?? 2) - (order[b.size] ?? 2)));
+  return { svg: ws.map((m, i) => glyph(m, x0 + 8 + (i % per) * step, y0 + 9 + Math.floor(i / per) * step)).join(''), rows: Math.ceil(ws.length / per) };
+}
+/* Figure 1: the pipeline front to back for each compiler, the build around it and the JVM under it, with every recorded win and fix where it acts. */
+function drawMap() {
+  const all = marks(); if (!all.length) { $('#fig-map').remove(); return; }
+  const W = 980, L = 92, cw = (W - L) / PHASES.length, rowsOf = c => all.filter(m => (m.compiler === c || (m.compiler === 'both')) && PHASES.some(p => p[0] === m.phase));
+  const comp = [['scala2', 'Scala 2'], ['scala3', 'Scala 3']];
+  const cellH = c => 18 + 15 * Math.max(1, ...PHASES.map(p => Math.ceil(rowsOf(c).filter(m => m.phase === p[0]).length / Math.floor((cw - 10) / 15))));
+  const band = id => all.filter(m => m.phase === id || (id === 'build' && m.compiler === 'zinc' && !PHASES.some(p => p[0] === m.phase)));
+  const perBand = Math.floor((W - L - 10) / 15), bandH = id => 18 + 15 * Math.max(1, Math.ceil(band(id).length / perBand));
+  let y = 8, g = '';
+  const strip = (id, label) => { const hh = bandH(id); g += `<rect x="${L}" y="${y}" width="${W - L}" height="${hh}" fill="none" stroke="var(--rule)" stroke-dasharray="3 3"/><text class="lab" x="0" y="${y + 15}">${label}</text>` + pack(band(id), L, y + 2, W - L - 10).svg; y += hh + 10; };
+  strip('build', 'Build, Zinc');
+  g += PHASES.map((p, i) => `<text class="hd" x="${L + i * cw + 6}" y="${y + 10}">${esc(p[1])}</text>`).join(''); y += 18;
+  const top = y;
+  for (const [c, label] of comp) {
+    const hh = cellH(c);
+    g += `<text class="lab" x="0" y="${y + 16}">${label}</text>` + PHASES.map((p, i) => `<rect x="${L + i * cw}" y="${y}" width="${cw}" height="${hh}" fill="none" stroke="var(--rule)"/>` + pack(rowsOf(c).filter(m => m.phase === p[0]), L + i * cw, y + 2, cw - 10).svg).join('');
+    y += hh;
+  }
+  // an arrow along the pipeline, to say which way the source flows
+  g += `<path d="M${L} ${y + 9}H${W - 6}m-6 -4l6 4l-6 4" fill="none" stroke="var(--muted)" stroke-width="1"/>`; y += 22;
+  strip('jvm', 'JVM'); strip('whole', 'Whole compiler');
+  const n = k => all.filter(k).length;
+  $('#fig-map').innerHTML = `<div class="scroll"><svg viewBox="0 0 ${W} ${y}" width="${W}" height="${y}">${g}</svg></div>
+    <figcaption><b>Figure 1.</b> Where the work landed. Source flows left to right through each compiler; the build decides what is compiled at all, and the JVM runs everything. A filled dot is a speedup (${n(m => !isFix(m) && m.plank !== 'parallel')}), larger when it moved a full compile by more; an open dot is a change not yet measured on a corpus; a square is parallel-typer work (${n(m => m.plank === 'parallel')}); a red diamond is a correctness fix that fell out (${n(isFix)}). Hover a mark for what it is.</figcaption>`;
+}
+/* Figure 2: the measured branch, one point per commit. */
+function drawLadder(L) {
+  const rows = L.rows.filter(r => r.ms != null), W = 980, H = 300, m = { l: 58, r: 150, t: 20, b: 30 };
+  const lo = Math.min(...rows.map(r => r.ms)), hi = Math.max(...rows.map(r => r.ms)), y0 = Math.floor(lo / 500) * 500, y1 = Math.ceil(hi / 500) * 500;
+  const x = i => m.l + i * (W - m.l - m.r) / (rows.length - 1), y = v => m.t + (y1 - v) * (H - m.t - m.b) / (y1 - y0);
+  let g = '';
+  for (let v = y0; v <= y1; v += 500) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--hair)"/><text x="${m.l - 8}" y="${y(v) + 3.5}" text-anchor="end">${v.toLocaleString()}</text>`;
+  g += `<text x="${m.l - 8}" y="${m.t - 8}" text-anchor="end">ms/op</text><path d="${rows.map((r, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(r.ms).toFixed(1)).join(' ')}" fill="none" stroke="var(--ink-2)" stroke-width="1.2"/>`;
+  rows.forEach((r, i) => {
+    const sig = r.sig === 'better';
+    g += `<circle cx="${x(i)}" cy="${y(r.ms)}" r="${sig ? 4.5 : 2.6}" fill="${sig ? 'var(--ink)' : 'var(--page)'}" stroke="var(--ink)" stroke-width="1.1"><title>${esc(r.what)}${r.pr ? '\n' + esc(r.pr) : ''}\n${Math.round(r.ms).toLocaleString()} ms/op${r.step ? ', step ' + esc(r.step) : ''}</title></circle>`;
+    if (sig) g += `<text class="lab" x="${x(i) + 9}" y="${y(r.ms) - 7}">${esc(r.label || r.what.slice(0, 30))}, ${esc(r.step.split(' ')[0])}</text>`;
+  });
+  const a = rows[0], z = rows[rows.length - 1];
+  g += `<text class="lab" x="${x(0) + 9}" y="${y(a.ms) + 4}">2.13.18: ${Math.round(a.ms).toLocaleString()} ms</text><text class="lab" x="${x(rows.length - 1) + 10}" y="${y(z.ms) + 4}">${Math.round(z.ms).toLocaleString()} ms, ${z.total.toFixed(1).replace('-', '−')}%</text>`;
+  const flat = rows.filter(r => r.sig === 'flat').length, sig = rows.filter(r => r.sig === 'better').length;
+  $('#fig-ladder').innerHTML = `<div class="scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${g}</svg></div>
+    <figcaption><b>Figure 2.</b> ${esc(L.note || 'Compile time on the measured branch, one point per commit.')} Filled points are the ${sig} steps the forks resolve on their own; the other ${flat} are each inside the noise, and together they are most of the way down.${L.url ? ` <a href="${esc(L.url)}" target="_blank">Source: the perf stack dashboard.</a>` : ''}</figcaption>`;
+}
+/* Figure 3: kind of waste against where in the compiler it was found. */
+function drawGrid() {
+  const groups = (P.wins || []).filter(g => (g.items || []).length); if (!groups.length) { $('#fig-grid').remove(); return; }
+  const cols = [['build', 'Build'], ...PHASES, ['jvm', 'JVM'], ['whole', 'Whole']], W = 980, L = 300, cw = (W - L) / cols.length;
+  let y = 44, g = cols.map((c, i) => `<text class="hd" transform="translate(${L + i * cw + 8} 38) rotate(-28)">${esc(c[1])}</text>`).join('');
+  for (const gr of groups) {
+    const per = Math.max(1, Math.floor((cw - 6) / 14)), hh = 10 + 14 * Math.max(1, ...cols.map(c => Math.ceil(gr.items.filter(w => w.phase === c[0]).length / per)));
+    g += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--hair)"/><text class="lab" x="0" y="${y + hh / 2 + 4}">${esc(gr.waste.length > 50 ? gr.waste.slice(0, 48) + '…' : gr.waste)}</text>` +
+      cols.map((c, i) => pack(gr.items.filter(w => w.phase === c[0]).map(w => ({ ...w, waste: gr.waste })), L + i * cw, y - 1, cw - 6, 14).svg).join('');
+    y += hh;
+  }
+  g += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--hair)"/>`;
+  $('#fig-grid').innerHTML = `<div class="scroll"><svg viewBox="0 0 ${W} ${y + 4}" width="${W}" height="${y + 4}">${g}</svg></div>
+    <figcaption><b>Figure 3.</b> The kind of waste against the part of the compiler it was found in. Marks as in Figure 1. An empty cell is a place nobody has looked with that question, or a place where the answer was no.</figcaption>`;
+}
+boot();
+</script>
+</body>
+</html>

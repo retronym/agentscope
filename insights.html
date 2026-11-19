@@ -167,6 +167,8 @@ mark { background: color-mix(in srgb, var(--warning) 35%, transparent); color: i
 
   <div id="week"></div>
 
+  <div id="perf"></div>
+
   <div id="since"></div>
 
   <h2 id="timeline">Timeline × mindmap</h2>
@@ -231,7 +233,7 @@ async function boot() {
   D.themesAll.forEach((th, i) => themeColor[th.id] = `var(--c${th.id === 'other' ? 9 : i % 9})`);
   if (D.themesAll.find(t => t.id === 'other')) folded.add('other');
   $('#narrative').textContent = D.narrative || '';
-  tiles(); nav(); chips(); drawTimeline(); week(); since(); sections(); hygiene(); infra();
+  tiles(); nav(); chips(); drawTimeline(); week(); perfTeaser(); since(); sections(); hygiene(); infra();
   $('#q').addEventListener('input', e => { query = e.target.value.trim(); drawTimeline(); week(); since(); sections(); });
   document.addEventListener('keydown', e => {
     if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); }
@@ -246,7 +248,7 @@ function tiles() {
   $('#tiles').innerHTML = t.map(([v, l]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
 }
 function nav() {
-  $('#nav').innerHTML = (D.last_week && D.last_week.sessions ? `<a href="#last-week">Last week</a>` : '') + (D.since_analysis && D.since_analysis.items.length ? `<a href="#since-analysis">Since<span class="n">${D.since_analysis.items.length}</span></a>` : '') + `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
+  $('#nav').innerHTML = (D.last_week && D.last_week.sessions ? `<a href="#last-week">Last week</a>` : '') + (D.perf_process && D.perf_process.title ? `<a href="/insights/perf">Perf write-up ↗</a>` : '') + (D.since_analysis && D.since_analysis.items.length ? `<a href="#since-analysis">Since<span class="n">${D.since_analysis.items.length}</span></a>` : '') + `<a href="#timeline">Timeline</a>` + SECTIONS.map(([k, l]) => (D.sections[k] || []).length ? `<a href="#${k}">${l}<span class="n">${D.sections[k].length}</span></a>` : '').join('') + `<a href="#local-only">Local only</a><a href="#infra-map">Infra map</a>`;
 }
 function chips() {
   const counts = {}; D.threads.forEach(t => counts[t.status || ''] = (counts[t.status || ''] || 0) + 1);
@@ -435,6 +437,11 @@ function week() {
     <div><h4>Where the time went</h4>${top.map(t => { const th = threadById[t.id]; return `<div class="bar" onclick="openThread('${esc(t.id)}')" title="${t.sessions.length} session${t.sessions.length > 1 ? 's' : ''}"><span>${hl(th.title)}</span><span class="h">${hrs(t.min)}</span><i style="width:${Math.max(2, 100 * t.min / max)}%;background:${themeColor[th.theme]}"></i></div>`; }).join('')}
     ${groups ? merged : ''}</div></div>`;
   $('#weekCopy').onclick = async e => { await navigator.clipboard.writeText(weekMarkdown()); e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy as Markdown', 1500); };
+}
+/* The perf write-up is a document of its own, /insights/perf: here, only its opening and the way in. */
+function perfTeaser() {
+  const P = D.perf_process; if (!P || !P.title) return;
+  $('#perf').innerHTML = `<h2 id="perf-process">${esc(P.title)}</h2><p class="sub" style="max-width:900px">${esc(P.lead || '')} <a href="/insights/perf"><b>Read the write-up →</b></a></p>`;
 }
 function since() {
   const sa = D.since_analysis; if (!sa || !sa.analysed || !sa.sessions.length) { $('#since').innerHTML = ''; return; }
