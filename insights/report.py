@@ -90,9 +90,8 @@ def perf(d):
     prs = lambda x: " ".join(f"[{k}]({url[k]})" if k in url else k for k in x.get("prs") or [])
     tail = lambda x: (" " + prs(x)) if x.get("prs") else ""
     st = P.get("stats", {})
-    o = ["# How the compiler perf wins were found", "",
-         f"{st.get('sessions')} sessions and {round(st.get('active_min', 0) / 60)} h of agent time across {st.get('threads')} threads on the Scala 2 and Scala 3 compilers, "
-         f"Zinc and the tooling under them; {st.get('prs')} PRs touched, {st.get('merged_upstream')} merged upstream.", "", P["lead"], "", "## What was achieved", ""]
+    o = [f"# {P.get('title') or 'How the compiler perf wins were found'}", "",
+         f"{st.get('prs')} pull requests, {st.get('merged_upstream')} merged upstream.", "", P.get("abstract") or P["lead"], "", "## What was achieved", ""]
     o += [f"- **{t['v']}** {t['l']}" for t in P.get("achieved", {}).get("tiles", [])] + [""]
     for pl in P.get("achieved", {}).get("planks", []):
         o += ["", f"### {pl['title']}", "", pl["summary"], ""]

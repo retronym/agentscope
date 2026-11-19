@@ -84,20 +84,18 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const PHASES = [['parser', 'Parser, names'], ['typer', 'Namer, typer'], ['types', 'Types, symbols'], ['patmat', 'Patmat'], ['refchecks', 'Refchecks'], ['transforms', 'Transforms'], ['pickler', 'Pickler'], ['backend', 'Backend']];
 const AROUND = [['build', 'Build and Zinc: what is compiled at all'], ['jvm', 'The JVM underneath: JIT, GC, object layout'], ['whole', 'Whole compiler']];
 const R = { large: 6.5, medium: 4.6, small: 3, unmeasured: 3 };
-let D, P, prByKey = {}, sess = {};
+let D, P, prByKey = {};
 
 async function boot() {
   try { D = window.INSIGHTS || await (await fetch('/api/insights')).json(); } catch (e) { D = null; }
   P = D && D.perf_process;
   if (!P || !P.title) { $('#page').innerHTML = `<p class="empty">No perf write-up yet: it is built from <code>synthesis/perf_process.json</code>.</p>`; return; }
   D.prs.forEach(p => prByKey[p.key] = p);
-  D.sessions.forEach(s => sess[s.sid] = s);
-  document.title = P.title;
+    document.title = P.title;
   render();
 }
 const pr = k => prByKey[k] ? `<a href="${esc(prByKey[k].url)}" target="_blank" title="${esc(prByKey[k].title)} (${esc((prByKey[k].state || '').toLowerCase())})">${esc(k.replace('retronym/', 'r/'))}</a>` : `<a>${esc(k)}</a>`;
-const sref = sid => { const s = sess[sid]; if (!s) return ''; const t = esc(s.title.length > 48 ? s.title.slice(0, 46).replace(/\s+\S*$/, '') + '…' : s.title); return s.local && !s.archived ? `<a class="s" href="claude://code/continue?session=${encodeURIComponent(s.local)}" title="Open the session in the Claude app">§ ${t}</a>` : `<span>§ ${t}</span> `; };
-const note = x => { const h = (x.prs || []).map(pr).join(' ') + ' ' + (x.sids || []).slice(0, 2).map(sref).join(' '); return h ? `<span class="sn">${h}</span>` : ''; };
+const note = x => { const h = (x.prs || []).map(pr).join(' '); return h ? `<span class="sn">${h}</span>` : ''; };
 const paras = a => (a || []).map(p => `<p>${esc(p)}</p>`).join('');
 const day = t => new Date(t * 1000).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -111,7 +109,7 @@ function render() {
 
   let h = `<div class="back"><a href="/insights">← agentscope · insights</a></div>
   <div class="col"><h1>${esc(P.title)}</h1>
-  <p class="by">${day(Date.parse(D.since) / 1000)} to ${day(D.generated)} · ${st.sessions} agent sessions, ${Math.round(st.active_min / 60)} hours of agent time, ${st.threads} threads of work · ${st.prs} pull requests touched, ${st.merged_upstream} merged upstream</p>
+  <p class="by">${day(Date.parse(D.since) / 1000)} to ${day(D.generated)} · ${st.prs} pull requests, ${st.merged_upstream} merged upstream</p>
   <p class="abstract">${esc(P.abstract || P.lead)}</p>
   <nav class="toc">${secs.map(([id, t]) => `<a href="#${id}"><span class="n">${num[id]}</span>${esc(t)}</a>`).join('')}</nav>`;
 
@@ -160,7 +158,7 @@ function render() {
     const xs = nx.filter(x => (x.plank || '') === id || (id === '' && !order.includes(x.plank || ''))); if (!xs.length) continue;
     h += `<tr class="grp"><td colspan="4">${esc(plankTitle[id] || 'Other')}</td></tr>` + xs.map(x => `<tr><td>${esc(x.title)}${note(x)}</td><td>${esc(x.kind || '')}</td><td>${esc(x.why)}</td><td>${esc(x.step)}</td></tr>`).join('');
   }
-  h += `</table><div class="colophon">Written from ${st.sessions} Claude Code session transcripts. Readers went back over each for method (techniques, questions, tool use, wrong turns) and one writer merged their notes with the session cards and the measured branch; numbers are as the sessions and the perflab campaigns report them and were not re-run for this document. The same text is in <code>PERF.md</code> beside the insights data.</div></div>`;
+  h += `</table><div class="colophon">Numbers are as measured during the work and were not re-run for this document.</div></div>`;
   $('#page').innerHTML = h;
   drawMap(); if (P.ladder && P.ladder.rows) drawLadder(P.ladder); drawGrid();
 }
@@ -221,7 +219,7 @@ function drawLadder(L) {
   g += `<text class="lab" x="${x(0) + 9}" y="${y(a.ms) + 4}">2.13.18: ${Math.round(a.ms).toLocaleString()} ms</text><text class="lab" x="${x(rows.length - 1) + 10}" y="${y(z.ms) + 4}">${Math.round(z.ms).toLocaleString()} ms, ${z.total.toFixed(1).replace('-', '−')}%</text>`;
   const flat = rows.filter(r => r.sig === 'flat').length, sig = rows.filter(r => r.sig === 'better').length;
   $('#fig-ladder').innerHTML = `<div class="scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${g}</svg></div>
-    <figcaption><b>Figure 2.</b> ${esc(L.note || 'Compile time on the measured branch, one point per commit.')} Filled points are the ${sig} steps the forks resolve on their own; the other ${flat} are each inside the noise, and together they are most of the way down.${L.url ? ` <a href="${esc(L.url)}" target="_blank">Source: the perf stack dashboard.</a>` : ''}</figcaption>`;
+    <figcaption><b>Figure 2.</b> ${esc(L.note || 'Compile time on the measured branch, one point per commit.')} Filled points are the ${sig} steps that resolve on their own; the other ${flat} are each inside the noise, and together they are most of the way down.</figcaption>`;
 }
 /* Figure 3: kind of waste against where in the compiler it was found. */
 function drawGrid() {
